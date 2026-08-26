@@ -7,11 +7,39 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 val WATypography = Typography(
-    headlineLarge = TextStyle(FontFamily.SansSerif, FontWeight.Bold, 30.sp),
-    headlineMedium = TextStyle(FontFamily.SansSerif, FontWeight.Bold, 24.sp),
-    titleLarge = TextStyle(FontFamily.SansSerif, FontWeight.Bold, 20.sp),
-    titleMedium = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, 16.sp),
-    bodyLarge = TextStyle(FontFamily.SansSerif, FontWeight.Normal, 16.sp),
-    bodyMedium = TextStyle(FontFamily.SansSerif, FontWeight.Normal, 14.sp),
-    labelLarge = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, 14.sp),
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 30.sp
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 24.sp
+    ),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 20.sp
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 16.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp
+    )
 )
