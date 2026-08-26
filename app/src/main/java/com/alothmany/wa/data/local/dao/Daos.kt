@@ -35,6 +35,15 @@ interface SourceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<WhatsAppSourceEntity>)
+
+    @Query("DELETE FROM whatsapp_sources")
+    suspend fun clear()
+
+    @Transaction
+    suspend fun replaceAll(items: List<WhatsAppSourceEntity>) {
+        clear()
+        if (items.isNotEmpty()) upsertAll(items)
+    }
 }
 
 @Dao

@@ -2,11 +2,21 @@
 <resources>
     <string name="app_name">WA Al-othmany</string>
     <string name="app_subtitle">Smart WhatsApp automation control center</string>
-    <string name="system_running">Foundation ready</string>
+    <string name="system_running">System integration ready</string>
     <string name="connected">Connected</string>
     <string name="enabled">Enabled</string>
     <string name="not_configured">Not configured</string>
     <string name="limited">Limited</string>
+    <string name="ready">Ready</string>
+    <string name="running">Running</string>
+    <string name="offline">Offline</string>
+    <string name="unavailable">Unavailable</string>
+    <string name="permission_required">Permission required</string>
+    <string name="configure">Configure</string>
+    <string name="recheck">Recheck</string>
+    <string name="refresh_system">Refresh system status</string>
+    <string name="phase_two_ready">Core v0.2 ready</string>
+    <string name="probing_system">Probing…</string>
     <string name="shizuku">Shizuku</string>
     <string name="accessibility">Accessibility</string>
     <string name="overlay">Overlay</string>
@@ -26,6 +36,10 @@
     <string name="wa_dual">Dual Messenger</string>
     <string name="wa_work">Work Profile</string>
     <string name="wa_secure">Secure Folder</string>
+    <string name="no_whatsapp_detected">No accessible WhatsApp source was detected yet. Recheck permissions and Shizuku.</string>
+    <string name="probe_sources">Probe sources</string>
+    <string name="detected_sources">Detected sources</string>
+    <string name="detected_sources_value">%1$d source(s) detected</string>
     <string name="smart_speed_settings">Smart speed settings</string>
     <string name="navigation_speed">Group navigation speed</string>
     <string name="wait_time">Wait time</string>
@@ -50,7 +64,7 @@
     <string name="active">Active</string>
     <string name="archived">Archived</string>
     <string name="restricted">Restricted</string>
-    <string name="no_groups">No groups yet. The Sync Engine will populate this screen in Phase 2.</string>
+    <string name="no_groups">No groups yet. The Sync Engine will populate this screen in Phase 3.</string>
     <string name="execution_control">Execution control</string>
     <string name="start_execution">Start</string>
     <string name="pause_execution">Pause</string>
@@ -61,8 +75,8 @@
     <string name="remaining">Remaining</string>
     <string name="current_speed">Current speed</string>
     <string name="no_active_job">No active job</string>
-    <string name="foundation_message">Foundation v0.1 is ready. WhatsApp engines are added in the next phases.</string>
-    <string name="coming_next_phase">This engine is prepared in the architecture and will be connected in the next phase.</string>
+    <string name="foundation_message">Core v0.2 is active: Shizuku, Accessibility, Overlay and source detection are now connected. Sync Engine is next.</string>
+    <string name="coming_next_phase">The engine is wired into the architecture and will be connected to WhatsApp in the next phase.</string>
     <string name="general">General</string>
     <string name="language">Language</string>
     <string name="language_system">System</string>
@@ -83,6 +97,8 @@
     <string name="sync_communities">Sync communities</string>
     <string name="save_progress">Save progress continuously</string>
     <string name="permissions_system">System &amp; permissions</string>
+    <string name="start_overlay">Start overlay</string>
+    <string name="stop_overlay">Stop overlay</string>
     <string name="open_logs">Open system log</string>
     <string name="open_diagnostics">Open diagnostics</string>
     <string name="no_tasks">No tasks yet</string>
@@ -96,6 +112,16 @@
     <string name="healthy">Healthy</string>
     <string name="core_status">Core status</string>
     <string name="phase_one">Foundation v0.1</string>
+    <string name="phase_two">System Integration v0.2</string>
+    <string name="capability_status">Capability status</string>
+    <string name="binder_alive">Binder alive</string>
+    <string name="permission_granted">Permission granted</string>
+    <string name="privileged_service">Privileged UserService</string>
+    <string name="shizuku_server">Shizuku server</string>
+    <string name="privileged_uid">Privileged UID</string>
+    <string name="service_connected">Service connected</string>
+    <string name="last_ui_event">Last WhatsApp UI event</string>
+    <string name="accessibility_nodes">Visible UI nodes</string>
     <string name="back">Back</string>
     <string name="feature_not_active">Engine not active yet</string>
     <string name="speed_percent">%1$d%%</string>
@@ -104,8 +130,12 @@
     <string name="status_success">SUCCESS</string>
     <string name="status_warning">WARNING</string>
     <string name="status_error">ERROR</string>
-    <string name="app_started_log">WA Al-othmany Foundation started</string>
+    <string name="app_started_log">WA Al-othmany Core v0.2 started</string>
     <string name="source_updated_log">WhatsApp source changed</string>
     <string name="settings_updated_log">Settings updated</string>
     <string name="selected_count">%1$d selected</string>
+    <string name="accessibility_service_label">WA Al-othmany Accessibility Core</string>
+    <string name="accessibility_service_description">Reads WhatsApp UI structure for WA Al-othmany automation, diagnostics and future sync operations.</string>
+    <string name="overlay_channel_name">WA Al-othmany controller</string>
+    <string name="overlay_notification_text">Floating automation controller is active</string>
 </resources>

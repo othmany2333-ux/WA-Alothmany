@@ -2,11 +2,21 @@
 <resources>
     <string name="app_name">WA Al-othmany</string>
     <string name="app_subtitle">لوحة التحكم الذكية لأتمتة واتساب</string>
-    <string name="system_running">الأساس جاهز</string>
+    <string name="system_running">تكامل النظام جاهز</string>
     <string name="connected">متصل</string>
     <string name="enabled">مفعّل</string>
     <string name="not_configured">غير مهيأ</string>
     <string name="limited">محدود</string>
+    <string name="ready">جاهز</string>
+    <string name="running">يعمل</string>
+    <string name="offline">غير متصل</string>
+    <string name="unavailable">غير متاح</string>
+    <string name="permission_required">يحتاج صلاحية</string>
+    <string name="configure">تهيئة</string>
+    <string name="recheck">إعادة فحص</string>
+    <string name="refresh_system">تحديث حالة النظام</string>
+    <string name="phase_two_ready">النواة v0.2 جاهزة</string>
+    <string name="probing_system">جاري الفحص…</string>
     <string name="shizuku">Shizuku</string>
     <string name="accessibility">Accessibility</string>
     <string name="overlay">Overlay</string>
@@ -26,6 +36,10 @@
     <string name="wa_dual">Dual Messenger</string>
     <string name="wa_work">Work Profile</string>
     <string name="wa_secure">Secure Folder</string>
+    <string name="no_whatsapp_detected">لم يتم اكتشاف مصدر واتساب متاح حتى الآن. أعد فحص الصلاحيات وShizuku.</string>
+    <string name="probe_sources">فحص المصادر</string>
+    <string name="detected_sources">المصادر المكتشفة</string>
+    <string name="detected_sources_value">تم اكتشاف %1$d مصدر</string>
     <string name="smart_speed_settings">إعدادات السرعة الذكية</string>
     <string name="navigation_speed">سرعة التنقل بين القروبات</string>
     <string name="wait_time">زمن الانتظار</string>
@@ -50,7 +64,7 @@
     <string name="active">نشط</string>
     <string name="archived">مؤرشف</string>
     <string name="restricted">مقيد</string>
-    <string name="no_groups">لا توجد قروبات بعد. محرك المزامنة سيملأ هذه الشاشة في المرحلة الثانية.</string>
+    <string name="no_groups">لا توجد قروبات بعد. محرك المزامنة سيملأ هذه الشاشة في المرحلة الثالثة.</string>
     <string name="execution_control">التحكم بالتنفيذ</string>
     <string name="start_execution">بدء التنفيذ</string>
     <string name="pause_execution">إيقاف مؤقت</string>
@@ -61,8 +75,8 @@
     <string name="remaining">المتبقي</string>
     <string name="current_speed">السرعة الحالية</string>
     <string name="no_active_job">لا توجد مهمة نشطة</string>
-    <string name="foundation_message">المرحلة الأساسية v0.1 جاهزة. سيتم ربط محركات واتساب في المراحل التالية.</string>
-    <string name="coming_next_phase">تم تجهيز مكان هذا المحرك في المعمارية وسيتم ربطه في المرحلة التالية.</string>
+    <string name="foundation_message">النواة v0.2 تعمل: تم ربط Shizuku وAccessibility وOverlay واكتشاف المصادر. الخطوة التالية محرك المزامنة.</string>
+    <string name="coming_next_phase">المحرك مربوط بالمعمارية وسيتم توصيله بواتساب في المرحلة التالية.</string>
     <string name="general">عام</string>
     <string name="language">اللغة</string>
     <string name="language_system">حسب الجهاز</string>
@@ -83,6 +97,8 @@
     <string name="sync_communities">مزامنة المجتمعات</string>
     <string name="save_progress">حفظ التقدم باستمرار</string>
     <string name="permissions_system">النظام والصلاحيات</string>
+    <string name="start_overlay">تشغيل الزر العائم</string>
+    <string name="stop_overlay">إيقاف الزر العائم</string>
     <string name="open_logs">فتح سجل النظام</string>
     <string name="open_diagnostics">فتح التشخيص</string>
     <string name="no_tasks">لا توجد مهام حتى الآن</string>
@@ -96,6 +112,16 @@
     <string name="healthy">سليمة</string>
     <string name="core_status">حالة النواة</string>
     <string name="phase_one">Foundation v0.1</string>
+    <string name="phase_two">System Integration v0.2</string>
+    <string name="capability_status">حالة القدرة</string>
+    <string name="binder_alive">Binder متصل</string>
+    <string name="permission_granted">الصلاحية ممنوحة</string>
+    <string name="privileged_service">خدمة الصلاحيات UserService</string>
+    <string name="shizuku_server">خادم Shizuku</string>
+    <string name="privileged_uid">UID للخدمة</string>
+    <string name="service_connected">الخدمة متصلة</string>
+    <string name="last_ui_event">آخر حدث من واجهة واتساب</string>
+    <string name="accessibility_nodes">عناصر الواجهة المرئية</string>
     <string name="back">رجوع</string>
     <string name="feature_not_active">المحرك غير مفعّل بعد</string>
     <string name="speed_percent">%1$d%%</string>
@@ -104,8 +130,12 @@
     <string name="status_success">نجاح</string>
     <string name="status_warning">تحذير</string>
     <string name="status_error">خطأ</string>
-    <string name="app_started_log">تم تشغيل أساس WA Al-othmany</string>
+    <string name="app_started_log">تم تشغيل نواة WA Al-othmany v0.2</string>
     <string name="source_updated_log">تم تغيير مصدر واتساب</string>
     <string name="settings_updated_log">تم تحديث الإعدادات</string>
     <string name="selected_count">تم تحديد %1$d</string>
+    <string name="accessibility_service_label">نواة Accessibility لـ WA Al-othmany</string>
+    <string name="accessibility_service_description">تقرأ بنية واجهة واتساب لتشخيص وأتمتة ومزامنة WA Al-othmany.</string>
+    <string name="overlay_channel_name">وحدة تحكم WA Al-othmany</string>
+    <string name="overlay_notification_text">وحدة التحكم العائمة بالأتمتة تعمل الآن</string>
 </resources>

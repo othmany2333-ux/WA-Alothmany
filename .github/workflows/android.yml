@@ -26,6 +26,28 @@ jobs:
       - name: Install SDK 36
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
+      # Keep one debug signing identity across CI runs so v0.2+ APKs can update
+      # each other on the phone. The first v0.2 install may still require
+      # uninstalling an older v0.1 APK that was signed by a previous ephemeral key.
+      - name: Restore stable debug signing key
+        id: debug-keystore-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: wa-al-othmany-debug-keystore-v1
+
+      - name: Create debug signing key if missing
+        if: steps.debug-keystore-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -dname "CN=Android Debug,O=WA Al-othmany,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
+
       - name: Make Gradle executable
         run: chmod +x gradlew
 
@@ -38,5 +60,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: wa-al-othmany-debug
+          name: wa-al-othmany-debug-v0.2
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
