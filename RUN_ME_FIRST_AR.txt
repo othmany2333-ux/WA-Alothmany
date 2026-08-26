@@ -1,0 +1,31 @@
+WA Al-othmany - Foundation v0.1
+================================
+
+طريقة التشغيل المختصرة:
+
+1) ثبّت Android Studio إصدار مستقر حديث.
+2) فك ضغط الملف ZIP.
+3) افتح مجلد WA-Al-othmany-Foundation-v0.1 من زر Open.
+4) انتظر Gradle Sync. أول مرة يحتاج إنترنت لتنزيل Gradle والمكتبات وAndroid SDK 37.
+5) إذا طلب SDK 37 أو Build Tools اضغط Install/Accept.
+6) على هاتف Android: Settings > Developer options > USB debugging = ON.
+7) صِل الهاتف بالكمبيوتر ووافق على رسالة USB debugging.
+8) من Android Studio اختر الهاتف ثم اضغط Run ▶.
+
+النسخة الحالية تشمل:
+- الواجهة المعتمدة.
+- العربية والإنجليزية.
+- الوضع الداكن والفاتح.
+- Dashboard.
+- مصادر واتساب الخمسة في الواجهة.
+- إعدادات السرعة.
+- القروبات مع تحديد الكل/إلغاء التحديد/المؤرشف/المجتمعات.
+- المهام والنتائج.
+- Room Database.
+- DataStore.
+- سجل الأخطاء والنظام.
+- شاشة Diagnostics.
+
+مهم:
+Shizuku وAccessibility وOverlay لم يتم ربطها فعليًا بعد في v0.1.
+هذا مقصود: المرحلة التالية v0.2 هي Core Integration، ثم نبدأ Global Sync Engine.

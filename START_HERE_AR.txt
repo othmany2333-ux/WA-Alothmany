@@ -1,0 +1,41 @@
+WA Al-othmany — ابدأ من هنا
+============================
+
+هذه هي المرحلة الأولى Foundation v0.1.
+لا تحتاج إلى كتابة أي كود لتجربتها.
+
+الطريقة الأسهل:
+1) فك ضغط المشروع على الكمبيوتر.
+2) افتح Android Studio.
+3) اختر Open.
+4) اختر مجلد WA-Al-othmany-Foundation-v0.1 بالكامل، وليس مجلد app وحده.
+5) انتظر Gradle Sync.
+6) إذا طلب Android Studio Android SDK 37 أو Build Tools فوافق على التثبيت.
+7) فعّل Developer Options وUSB Debugging على هاتف Android.
+8) وصّل الهاتف بالكمبيوتر.
+9) من أعلى Android Studio اختر الهاتف.
+10) اضغط Run ▶.
+
+ماذا سترى؟
+- التصميم الداكن المعتمد لـ WA Al-othmany.
+- Dashboard.
+- اختيار مصدر واتساب.
+- إعدادات السرعة.
+- الأزرار: المزامنة / الانضمام / الفحص / الاستخراج / النشر / الحذف.
+- القروبات.
+- المهام.
+- النتائج.
+- الإعدادات.
+- العربية والإنجليزية.
+- Dark / Light / System.
+- سجل النظام.
+- Diagnostics.
+
+مهم:
+Shizuku وAccessibility وOverlay في v0.1 يظهرون "غير مهيأ" عن قصد.
+المرحلة التالية v0.2 هي ربطهم فعليًا، ثم نبدأ Global Sync Engine.
+
+GitHub:
+يوجد Workflow جاهز في:
+.github/workflows/android.yml
+بعد رفع المشروع إلى GitHub سيحاول بناء Debug APK تلقائيًا.
