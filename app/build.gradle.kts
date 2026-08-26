@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.alothmany.wa"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.alothmany.wa"
