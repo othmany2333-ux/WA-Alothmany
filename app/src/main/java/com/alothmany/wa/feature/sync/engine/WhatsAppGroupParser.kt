@@ -20,8 +20,14 @@ import javax.inject.Singleton
  */
 @Singleton
 class WhatsAppGroupParser @Inject constructor() {
+    // UI labels are normalized before comparison. Arabic normalization changes
+    // taa marbuta (ة) to haa (ه), so keep normalized archived variants here too.
     private val archivedLabels = setOf(
-        "archived", "archived chats", "مؤرشفة", "المؤرشفة", "المؤرشف", "الدردشات المؤرشفة"
+        "archived", "archived chats",
+        "مؤرشفة", "مؤرشفه",
+        "المؤرشفة", "المؤرشفه",
+        "المؤرشف",
+        "الدردشات المؤرشفة", "الدردشات المؤرشفه"
     )
 
     private val ignoredExact = setOf(
