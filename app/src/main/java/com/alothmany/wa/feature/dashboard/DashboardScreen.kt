@@ -104,31 +104,52 @@ fun DashboardScreen(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             StatusPill(
-                stringResource(R.string.shizuku),
-                capabilityText(state.system.shizuku.status),
-                Icons.Rounded.Terminal,
-                capabilityColor(state.system.shizuku.status),
+                title = stringResource(R.string.shizuku),
+                status = capabilityText(state.system.shizuku.status),
+                icon = Icons.Rounded.Terminal,
+                color = capabilityColor(state.system.shizuku.status),
+                actionText = stringResource(
+                    if (state.system.shizuku.permissionGranted) R.string.recheck
+                    else R.string.grant_permission
+                ),
+                onClick = {
+                    if (state.system.shizuku.permissionGranted) viewModel.refreshSystem()
+                    else viewModel.configureShizuku()
+                },
             )
             StatusPill(
-                stringResource(R.string.accessibility),
-                stringResource(
+                title = stringResource(R.string.accessibility),
+                status = stringResource(
                     if (state.system.accessibility.enabled) R.string.enabled
                     else R.string.permission_required
                 ),
-                Icons.Rounded.AccessibilityNew,
-                if (state.system.accessibility.enabled) Green400 else Blue400,
+                icon = Icons.Rounded.AccessibilityNew,
+                color = if (state.system.accessibility.enabled) Green400 else Blue400,
+                actionText = stringResource(
+                    if (state.system.accessibility.enabled) R.string.manage_permission
+                    else R.string.grant_permission
+                ),
+                onClick = viewModel::configureAccessibility,
             )
             StatusPill(
-                stringResource(R.string.overlay),
-                stringResource(
+                title = stringResource(R.string.overlay),
+                status = stringResource(
                     when {
                         state.system.overlayRunning -> R.string.running
                         state.system.overlayPermissionGranted -> R.string.ready
                         else -> R.string.permission_required
                     }
                 ),
-                Icons.Rounded.Layers,
-                if (state.system.overlayRunning) Green400 else Purple400,
+                icon = Icons.Rounded.Layers,
+                color = if (state.system.overlayRunning) Green400 else Purple400,
+                actionText = stringResource(
+                    when {
+                        state.system.overlayRunning -> R.string.stop_overlay
+                        state.system.overlayPermissionGranted -> R.string.start_overlay
+                        else -> R.string.grant_permission
+                    }
+                ),
+                onClick = viewModel::toggleOverlay,
             )
         }
 

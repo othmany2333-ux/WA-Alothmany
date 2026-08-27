@@ -42,8 +42,18 @@ fun StatusPill(
     status: String,
     icon: ImageVector,
     color: Color,
+    modifier: Modifier = Modifier,
+    actionText: String? = null,
+    onClick: (() -> Unit)? = null,
 ) {
+    val interactiveModifier = if (onClick != null) {
+        modifier.clickable(onClick = onClick)
+    } else {
+        modifier
+    }
+
     Surface(
+        modifier = interactiveModifier,
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .85f),
         border = BorderStroke(1.dp, color.copy(alpha = .35f)),
@@ -57,6 +67,15 @@ fun StatusPill(
             Column {
                 Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1)
                 Text(status, color = color, fontSize = 11.sp, maxLines = 1)
+                if (!actionText.isNullOrBlank()) {
+                    Text(
+                        actionText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

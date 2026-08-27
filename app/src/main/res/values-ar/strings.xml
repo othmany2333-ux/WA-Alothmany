@@ -97,6 +97,9 @@
     <string name="sync_communities">مزامنة المجتمعات</string>
     <string name="save_progress">حفظ التقدم باستمرار</string>
     <string name="permissions_system">النظام والصلاحيات</string>
+    <string name="permission_center">مركز الصلاحيات</string>
+    <string name="grant_permission">منح الصلاحية</string>
+    <string name="manage_permission">إدارة الصلاحية</string>
     <string name="start_overlay">تشغيل الزر العائم</string>
     <string name="stop_overlay">إيقاف الزر العائم</string>
     <string name="open_logs">فتح سجل النظام</string>

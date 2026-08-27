@@ -72,6 +72,10 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun refreshSystem() = systemIntegration.refresh()
+    fun configureShizuku() = systemIntegration.configureShizuku()
+    fun configureAccessibility() = systemIntegration.configureAccessibility()
+    fun toggleOverlay() = systemIntegration.toggleOverlay()
+    fun probeSources() = systemIntegration.probeSources()
 
     fun setSource(source: WhatsAppSourceType) = viewModelScope.launch {
         if (source !in systemIntegration.state.value.availableSourceTypes) {

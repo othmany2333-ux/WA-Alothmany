@@ -97,6 +97,9 @@
     <string name="sync_communities">Sync communities</string>
     <string name="save_progress">Save progress continuously</string>
     <string name="permissions_system">System &amp; permissions</string>
+    <string name="permission_center">Permission center</string>
+    <string name="grant_permission">Grant permission</string>
+    <string name="manage_permission">Manage permission</string>
     <string name="start_overlay">Start overlay</string>
     <string name="stop_overlay">Stop overlay</string>
     <string name="open_logs">Open system log</string>

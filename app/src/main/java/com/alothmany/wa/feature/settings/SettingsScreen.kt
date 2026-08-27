@@ -109,7 +109,7 @@ fun SettingsScreen(
         }
 
         GlassCard(accent = Purple400) {
-            SectionTitle(stringResource(R.string.permissions_system))
+            SectionTitle(stringResource(R.string.permission_center))
 
             PermissionAction(
                 title = stringResource(R.string.shizuku),
@@ -118,7 +118,7 @@ fun SettingsScreen(
                 color = capabilityColor(system.shizuku.status),
                 actionText = stringResource(
                     if (system.shizuku.permissionGranted) R.string.recheck
-                    else R.string.configure
+                    else R.string.grant_permission
                 ),
                 onAction = viewModel::configureShizuku,
             )
@@ -131,7 +131,10 @@ fun SettingsScreen(
                 ),
                 icon = Icons.Rounded.AccessibilityNew,
                 color = if (system.accessibility.enabled) Green400 else Blue400,
-                actionText = stringResource(R.string.configure),
+                actionText = stringResource(
+                    if (system.accessibility.enabled) R.string.manage_permission
+                    else R.string.grant_permission
+                ),
                 onAction = viewModel::configureAccessibility,
             )
 
@@ -150,7 +153,7 @@ fun SettingsScreen(
                     when {
                         system.overlayRunning -> R.string.stop_overlay
                         system.overlayPermissionGranted -> R.string.start_overlay
-                        else -> R.string.configure
+                        else -> R.string.grant_permission
                     }
                 ),
                 onAction = viewModel::toggleOverlay,
