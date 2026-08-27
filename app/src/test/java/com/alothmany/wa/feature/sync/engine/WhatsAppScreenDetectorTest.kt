@@ -15,6 +15,7 @@ class WhatsAppScreenDetectorTest {
         val snapshot = snapshot(
             listOf(
                 label("الدردشات", 2250),
+                primaryList(),
                 row(220, "محمد", "مرحبا"),
                 row(400, "طلاب الجامعة", "~ Ahmed: المحاضرة"),
                 row(580, "خالد", "رسالة"),
@@ -24,13 +25,33 @@ class WhatsAppScreenDetectorTest {
     }
 
     @Test
-    fun searchSurfaceIsNotChatList() {
+    fun passiveSearchBoxInsideChatsIsStillChatList() {
+        val search = WhatsAppUiNode(
+            text = "بحث...", contentDescription = "Search chats", className = "android.widget.EditText",
+            viewId = "search", clickable = true, scrollable = false, enabled = true, depth = 3,
+            bounds = RectSnapshot(50, 80, 1000, 180),
+            focused = false, editable = true,
+        )
+        val snapshot = snapshot(
+            listOf(search, label("الدردشات", 2250).single(), primaryList().single()) +
+                row(260, "طلاب الجامعة", "~ Ahmed: hi") +
+                row(440, "محمد", "مرحبا")
+        )
+        assertEquals(WhatsAppSurface.CHAT_LIST, detector.classify(snapshot, parser.parse(snapshot)))
+    }
+
+    @Test
+    fun focusedSearchFieldIsSearchSurface() {
         val edit = WhatsAppUiNode(
             text = "بحث...", contentDescription = "Search chats", className = "android.widget.EditText",
             viewId = "search", clickable = true, scrollable = false, enabled = true, depth = 3,
             bounds = RectSnapshot(50, 80, 1000, 180),
+            focused = true, editable = true,
         )
-        val snapshot = snapshot(listOf(edit) + row(260, "طلاب الجامعة", "~ Ahmed: hi"))
+        val snapshot = snapshot(
+            listOf(edit, label("الدردشات", 2250).single(), primaryList().single()) +
+                row(260, "طلاب الجامعة", "~ Ahmed: hi")
+        )
         assertEquals(WhatsAppSurface.SEARCH, detector.classify(snapshot, parser.parse(snapshot)))
     }
 
@@ -40,6 +61,7 @@ class WhatsAppScreenDetectorTest {
             listOf(
                 label("القنوات", 90),
                 label("الدردشات", 2250),
+                primaryList(),
                 row(250, "قناة تقنية", "آخر تحديث"),
                 row(440, "قناة أخبار", "خبر جديد"),
                 row(630, "قناة ثالثة", "تحديث"),
@@ -54,6 +76,14 @@ class WhatsAppScreenDetectorTest {
         capturedAt = System.currentTimeMillis(),
         rootBounds = RectSnapshot(0, 0, 1080, 2400),
         nodes = nodes,
+    )
+
+    private fun primaryList() = listOf(
+        WhatsAppUiNode(
+            text = null, contentDescription = null, className = "androidx.recyclerview.widget.RecyclerView",
+            viewId = "chat_list", clickable = false, scrollable = true, enabled = true, depth = 2,
+            bounds = RectSnapshot(0, 180, 1080, 2180),
+        )
     )
 
     private fun label(text: String, top: Int) = listOf(

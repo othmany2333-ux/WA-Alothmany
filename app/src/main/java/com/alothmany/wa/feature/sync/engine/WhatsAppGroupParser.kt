@@ -2,6 +2,7 @@ package com.alothmany.wa.feature.sync.engine
 
 import com.alothmany.wa.feature.sync.model.ParsedGroupCandidate
 import com.alothmany.wa.feature.sync.model.ParsedGroupScreen
+import com.alothmany.wa.system.accessibility.RectSnapshot
 import com.alothmany.wa.system.accessibility.WhatsAppUiNode
 import com.alothmany.wa.system.accessibility.WhatsAppUiSnapshot
 import java.security.MessageDigest
@@ -81,26 +82,184 @@ class WhatsAppGroupParser @Inject constructor() {
         val minRowWidth = (snapshot.width * 0.62f).toInt()
         val contentTop = (snapshot.height * 0.055f).toInt()
 
-        val rowNodes = snapshot.nodes.asSequence()
-            .filter { it.enabled && it.clickable }
-            .filter { it.bounds.width >= minRowWidth }
-            .filter { it.bounds.height in minRowHeight..maxRowHeight }
-            .filter { it.bounds.top >= contentTop && it.bounds.bottom <= snapshot.height }
-            .distinctBy { listOf(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom) }
-            .sortedBy { it.bounds.top }
-            .toList()
+        val rowNodes = discoverRowNodes(
+            snapshot = snapshot,
+            minRowHeight = minRowHeight,
+            maxRowHeight = maxRowHeight,
+            minRowWidth = minRowWidth,
+            contentTop = contentTop,
+        )
 
-        val parsedRows = rowNodes.mapNotNull { row -> parseRow(snapshot, row) }
+        val parsedRows = rowNodes
+            .mapNotNull { row -> parseRow(snapshot, row) }
+            .distinctBy { it.observationFingerprint }
+
         val groups = parsedRows.mapNotNull { it.group }
             .distinctBy { it.identityFingerprint }
 
+        val fallbackFingerprintParts = snapshot.nodes.asSequence()
+            .filter { it.bounds.top >= contentTop && it.bounds.bottom <= (snapshot.height * 0.92f).toInt() }
+            .flatMap { node -> sequenceOf(node.text, node.contentDescription) }
+            .mapNotNull(::cleanLabel)
+            .map(::normalize)
+            .filter { it.isNotBlank() }
+            .filterNot { it in ignoredExact }
+            .take(120)
+            .toList()
+
+        val screenParts = parsedRows
+            .map { it.observationFingerprint }
+            .ifEmpty { fallbackFingerprintParts }
+
+        val hasPrimaryScrollableList = snapshot.nodes.any { node ->
+            node.scrollable &&
+                node.bounds.width >= (snapshot.width * 0.52f).toInt() &&
+                node.bounds.height >= (snapshot.height * 0.28f).toInt()
+        }
+
         return ParsedGroupScreen(
             groups = groups,
-            screenFingerprint = fingerprint(parsedRows.map { it.observationFingerprint }),
-            looksLikeChatList = parsedRows.size >= 2,
+            screenFingerprint = fingerprint(screenParts),
+            looksLikeChatList = parsedRows.size >= 2 || hasPrimaryScrollableList,
             hasArchivedEntry = hasArchivedEntry,
             chatRowCount = parsedRows.size,
         )
+    }
+
+    /**
+     * WhatsApp builds chat rows differently across releases/OEMs. Some versions
+     * expose the whole row as clickable; others expose a non-clickable container.
+     * We therefore discover rows from geometry + contained text and add a
+     * text-band fallback when no stable row container is exposed.
+     */
+    private fun discoverRowNodes(
+        snapshot: WhatsAppUiSnapshot,
+        minRowHeight: Int,
+        maxRowHeight: Int,
+        minRowWidth: Int,
+        contentTop: Int,
+    ): List<WhatsAppUiNode> {
+        val contentBottom = (snapshot.height * 0.92f).toInt()
+
+        val structural = snapshot.nodes.asSequence()
+            .filter { it.enabled && !it.scrollable }
+            .filter { it.bounds.width >= minRowWidth }
+            .filter { it.bounds.height in minRowHeight..maxRowHeight }
+            .filter { it.bounds.top >= contentTop && it.bounds.bottom <= contentBottom }
+            .filter { node ->
+                node.clickable || meaningfulTextCount(snapshot, node) >= 2
+            }
+            .toList()
+
+        val inferred = inferTextBandRows(snapshot, contentTop, contentBottom, maxRowHeight)
+        val all = structural + inferred
+        if (all.isEmpty()) return emptyList()
+
+        val tolerance = (snapshot.height * 0.025f).toInt().coerceAtLeast(18)
+        val selected = mutableListOf<WhatsAppUiNode>()
+
+        all.sortedBy { it.bounds.top }.forEach { candidate ->
+            val center = (candidate.bounds.top + candidate.bounds.bottom) / 2
+            val existingIndex = selected.indexOfFirst { existing ->
+                val existingCenter = (existing.bounds.top + existing.bounds.bottom) / 2
+                kotlin.math.abs(existingCenter - center) <= tolerance
+            }
+
+            if (existingIndex < 0) {
+                selected += candidate
+            } else {
+                val existing = selected[existingIndex]
+                if (rowQuality(snapshot, candidate) > rowQuality(snapshot, existing)) {
+                    selected[existingIndex] = candidate
+                }
+            }
+        }
+
+        return selected.sortedBy { it.bounds.top }
+    }
+
+    private fun inferTextBandRows(
+        snapshot: WhatsAppUiSnapshot,
+        contentTop: Int,
+        contentBottom: Int,
+        maxRowHeight: Int,
+    ): List<WhatsAppUiNode> {
+        val textNodes = snapshot.nodes.asSequence()
+            .filter { it.bounds.width > 0 && it.bounds.height > 0 }
+            .filter { it.bounds.top >= contentTop && it.bounds.bottom <= contentBottom }
+            .filter { node ->
+                val raw = cleanLabel(node.text) ?: cleanLabel(node.contentDescription)
+                raw != null && normalize(raw).let { value ->
+                    value.isNotBlank() && value !in ignoredExact && value.length <= 180
+                }
+            }
+            .sortedBy { (it.bounds.top + it.bounds.bottom) / 2 }
+            .toList()
+
+        if (textNodes.size < 2) return emptyList()
+
+        val bandGap = (snapshot.height * 0.043f).toInt().coerceAtLeast(36)
+        val bands = mutableListOf<MutableList<WhatsAppUiNode>>()
+
+        textNodes.forEach { node ->
+            val center = (node.bounds.top + node.bounds.bottom) / 2
+            val current = bands.lastOrNull()
+            if (current == null) {
+                bands += mutableListOf(node)
+            } else {
+                val currentCenter = current.map { (it.bounds.top + it.bounds.bottom) / 2 }.average().toInt()
+                if (kotlin.math.abs(center - currentCenter) <= bandGap) {
+                    current += node
+                } else {
+                    bands += mutableListOf(node)
+                }
+            }
+        }
+
+        return bands.mapNotNull { band ->
+            val labels = band.mapNotNull { node ->
+                cleanLabel(node.text) ?: cleanLabel(node.contentDescription)
+            }.map(::normalize).distinct()
+
+            val plausibleTitles = labels.filter(::isPossibleTitle)
+            if (labels.size < 2 || plausibleTitles.isEmpty()) return@mapNotNull null
+
+            val top = (band.minOf { it.bounds.top } - 8).coerceAtLeast(contentTop)
+            val bottom = (band.maxOf { it.bounds.bottom } + 8).coerceAtMost(contentBottom)
+            if (bottom <= top || bottom - top > maxRowHeight) return@mapNotNull null
+
+            WhatsAppUiNode(
+                text = null,
+                contentDescription = null,
+                className = "synthetic.ChatRow",
+                viewId = "synthetic_chat_row",
+                clickable = false,
+                scrollable = false,
+                enabled = true,
+                depth = 0,
+                bounds = RectSnapshot(0, top, snapshot.width, bottom),
+            )
+        }
+    }
+
+    private fun meaningfulTextCount(snapshot: WhatsAppUiSnapshot, row: WhatsAppUiNode): Int =
+        snapshot.nodes.asSequence()
+            .filter { node -> row.bounds.contains(node.bounds) }
+            .flatMap { node -> sequenceOf(node.text, node.contentDescription) }
+            .mapNotNull(::cleanLabel)
+            .map(::normalize)
+            .filter { it.isNotBlank() && it !in ignoredExact }
+            .filterNot { timeRegex.matches(it) || dateRegex.matches(it) || countRegex.matches(it) }
+            .distinct()
+            .take(6)
+            .count()
+
+    private fun rowQuality(snapshot: WhatsAppUiSnapshot, row: WhatsAppUiNode): Int {
+        val textScore = meaningfulTextCount(snapshot, row).coerceAtMost(6) * 18
+        val clickScore = if (row.clickable) 80 else 0
+        val realContainerScore = if (row.viewId == "synthetic_chat_row") 0 else 24
+        val widthScore = (row.bounds.width * 12 / snapshot.width.coerceAtLeast(1)).coerceAtMost(12)
+        return textScore + clickScore + realContainerScore + widthScore
     }
 
     private data class ParsedRow(
@@ -125,6 +284,7 @@ class WhatsAppGroupParser @Inject constructor() {
         if (usableText.isEmpty()) return null
 
         val titlePair = usableText
+            .filter { (_, raw) -> isPossibleTitle(normalize(raw)) }
             .filter { (node, _) -> node.bounds.top <= row.bounds.top + (row.bounds.height * 0.62f) }
             .sortedWith(
                 compareByDescending<Pair<WhatsAppUiNode, String>> { it.first.text != null }

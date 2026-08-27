@@ -227,6 +227,8 @@ class WAAccessibilityService : AccessibilityService() {
                 enabled = node.isEnabled,
                 depth = depth,
                 bounds = RectSnapshot.from(rect),
+                focused = node.isFocused,
+                editable = node.isEditable,
             )
             for (index in node.childCount - 1 downTo 0) {
                 node.getChild(index)?.let { child -> stack.add(child to (depth + 1)) }

@@ -92,6 +92,8 @@ data class WhatsAppUiNode(
     val enabled: Boolean,
     val depth: Int,
     val bounds: RectSnapshot,
+    val focused: Boolean = false,
+    val editable: Boolean = false,
 )
 
 data class RectSnapshot(
