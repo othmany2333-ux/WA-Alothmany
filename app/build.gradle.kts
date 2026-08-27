@@ -13,8 +13,8 @@ android {
         applicationId = "com.alothmany.wa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.3.5"
+        versionCode = 11
+        versionName = "0.3.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
