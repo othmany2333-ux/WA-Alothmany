@@ -8,7 +8,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -18,16 +20,33 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.alothmany.wa.MainActivity
 import com.alothmany.wa.R
+import com.alothmany.wa.feature.sync.engine.SmartSyncEngine
+import com.alothmany.wa.feature.sync.model.SyncEngineStatus
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 import kotlin.math.abs
 
+@AndroidEntryPoint
 class OverlayControlService : Service() {
     companion object {
         private const val CHANNEL_ID = "wa_alothmany_overlay"
         private const val NOTIFICATION_ID = 2202
     }
 
+    @Inject lateinit var smartSyncEngine: SmartSyncEngine
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private var bubbleView: TextView? = null
+    private var pauseView: TextView? = null
     private lateinit var params: WindowManager.LayoutParams
 
     override fun onCreate() {
@@ -36,6 +55,16 @@ class OverlayControlService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         showOverlay()
         OverlayRuntime.setRunning(true)
+
+        scope.launch {
+            smartSyncEngine.state.collectLatest { state ->
+                mainHandler.post {
+                    val active = state.running || state.status == SyncEngineStatus.PAUSED
+                    bubbleView?.text = if (active) "⚡ SYNC ${state.discoveredCount}" else "⚡ WA"
+                    pauseView?.text = if (state.status == SyncEngineStatus.PAUSED) "▶" else "⏸"
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -43,8 +72,11 @@ class OverlayControlService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        scope.cancel()
         overlayView?.let { runCatching { windowManager.removeView(it) } }
         overlayView = null
+        bubbleView = null
+        pauseView = null
         OverlayRuntime.setRunning(false)
         super.onDestroy()
     }
@@ -56,8 +88,7 @@ class OverlayControlService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -78,6 +109,7 @@ class OverlayControlService : Service() {
             setPadding(dp(14), dp(10), dp(14), dp(10))
             background = roundedBackground("#13232B", "#00D9E6", 18f)
         }
+        bubbleView = bubble
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -88,15 +120,26 @@ class OverlayControlService : Service() {
         }
 
         val pause = actionButton("⏸") {
-            AutomationControlBus.togglePause()
-            it.text = if (AutomationControlBus.state.value.paused) "▶" else "⏸"
+            val status = smartSyncEngine.state.value.status
+            if (status == SyncEngineStatus.PAUSED) {
+                smartSyncEngine.resume()
+            } else if (smartSyncEngine.state.value.running) {
+                smartSyncEngine.pause()
+            } else {
+                AutomationControlBus.togglePause()
+            }
         }
+        pauseView = pause
+
         val stop = actionButton("⏹") {
-            AutomationControlBus.requestStop()
+            val state = smartSyncEngine.state.value
+            if (state.running || state.status == SyncEngineStatus.PAUSED) {
+                smartSyncEngine.stop()
+            } else {
+                AutomationControlBus.requestStop()
+            }
         }
-        val close = actionButton("×") {
-            stopSelf()
-        }
+        val close = actionButton("×") { stopSelf() }
         panel.addView(pause)
         panel.addView(stop)
         panel.addView(close)

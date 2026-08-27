@@ -21,6 +21,7 @@ import com.alothmany.wa.feature.logs.LogsScreen
 import com.alothmany.wa.feature.placeholder.FeaturePlaceholderScreen
 import com.alothmany.wa.feature.results.ResultsScreen
 import com.alothmany.wa.feature.settings.SettingsScreen
+import com.alothmany.wa.feature.sync.SyncScreen
 import com.alothmany.wa.feature.tasks.TasksScreen
 
 private data class BottomItem(val destination: Destination, val label: Int, val icon: ImageVector)
@@ -84,11 +85,17 @@ fun WAAlOthmanyRoot(viewModel: AppRootViewModel = hiltViewModel()) {
                 }
                 composable(Destination.Logs.route) { LogsScreen(onBack = { navController.popBackStack() }) }
                 composable(Destination.Diagnostics.route) { DiagnosticsScreen(onBack = { navController.popBackStack() }) }
-                composable(Destination.Sync.route) { FeaturePlaceholderScreen(R.string.sync, Icons.Rounded.Sync, onBack = { navController.popBackStack() }) }
+                composable(Destination.Sync.route) {
+                    SyncScreen(
+                        onBack = { navController.popBackStack() },
+                        onNavigate = navController::navigate,
+                    )
+                }
                 composable(Destination.Join.route) { FeaturePlaceholderScreen(R.string.join, Icons.Rounded.GroupAdd, onBack = { navController.popBackStack() }) }
                 composable(Destination.Check.route) { FeaturePlaceholderScreen(R.string.check, Icons.Rounded.Policy, onBack = { navController.popBackStack() }) }
                 composable(Destination.Extract.route) { FeaturePlaceholderScreen(R.string.extract, Icons.Rounded.Link, onBack = { navController.popBackStack() }) }
                 composable(Destination.Publish.route) { FeaturePlaceholderScreen(R.string.publish, Icons.Rounded.Campaign, onBack = { navController.popBackStack() }) }
+                composable(Destination.Delete.route) { FeaturePlaceholderScreen(R.string.delete, Icons.Rounded.DeleteSweep, onBack = { navController.popBackStack() }) }
             }
         }
     }

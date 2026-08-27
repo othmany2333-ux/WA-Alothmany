@@ -84,7 +84,7 @@ fun DashboardScreen(
                     Text(
                         stringResource(
                             if (state.system.probing) R.string.probing_system
-                            else R.string.phase_two_ready
+                            else R.string.phase_three_ready
                         )
                     )
                 },
@@ -279,7 +279,7 @@ fun DashboardScreen(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             FeatureTile(
                 stringResource(R.string.sync),
-                stringResource(R.string.coming_next_phase),
+                stringResource(R.string.sync_ready_to_test),
                 Icons.Rounded.Sync,
                 Teal400,
                 { onNavigate(Destination.Sync.route) },
@@ -367,7 +367,7 @@ fun DashboardScreen(
             ) {
                 Icon(Icons.Rounded.Info, null, tint = Cyan400)
                 Text(
-                    stringResource(R.string.foundation_message),
+                    stringResource(R.string.sync_foundation_message),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                 )

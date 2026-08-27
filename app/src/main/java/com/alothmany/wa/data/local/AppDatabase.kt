@@ -12,8 +12,11 @@ import com.alothmany.wa.data.local.entity.*
         WhatsAppSourceEntity::class,
         GroupEntity::class,
         LinkEntity::class,
+        GroupSyncMetaEntity::class,
+        SyncRunEntity::class,
+        SyncCheckpointEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,4 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
     abstract fun groupDao(): GroupDao
     abstract fun linkDao(): LinkDao
+    abstract fun groupSyncMetaDao(): GroupSyncMetaDao
+    abstract fun syncRunDao(): SyncRunDao
+    abstract fun syncCheckpointDao(): SyncCheckpointDao
 }
