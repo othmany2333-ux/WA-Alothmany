@@ -28,6 +28,11 @@ data class AccessibilitySnapshot(
     val lastPackage: String? = null,
     val lastEventType: Int? = null,
     val nodeCount: Int = 0,
+    val textNodeCount: Int = 0,
+    val scrollableNodeCount: Int = 0,
+    val interactiveWindowCount: Int = 0,
+    val captureSource: String? = null,
+    val lastSnapshotAt: Long = 0L,
     val lastEventAt: Long = 0L,
 )
 

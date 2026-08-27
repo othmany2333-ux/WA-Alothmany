@@ -138,8 +138,9 @@ class SyncViewModel @Inject constructor(
             runtime = baseState.runtime,
             sourceId = sourceId,
             sourceName = source?.displayName,
-            accessibilityReady = baseState.system.accessibility.enabled,
-            canStart = source?.launchable == true && baseState.system.accessibility.enabled,
+            accessibilityReady = baseState.system.accessibility.enabled || baseState.system.accessibility.serviceConnected,
+            canStart = source?.launchable == true &&
+                (baseState.system.accessibility.enabled || baseState.system.accessibility.serviceConnected),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUiState())
 

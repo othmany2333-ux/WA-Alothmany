@@ -1,28 +1,47 @@
 package com.alothmany.wa.system.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class WAAccessibilityService : AccessibilityService() {
     companion object {
-        private const val MAX_NODES = 2400
-        private const val SNAPSHOT_THROTTLE_MS = 95L
-        private const val COMMAND_TIMEOUT_MS = 900L
+        private const val MAX_NODES = 4000
+        private const val SNAPSHOT_THROTTLE_MS = 70L
+        private const val COMMAND_TIMEOUT_MS = 1200L
         private val TARGET_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
     }
+
+    private data class RootSelection(
+        val root: AccessibilityNodeInfo,
+        val source: String,
+        val interactiveWindowCount: Int,
+    )
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastSnapshotAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+
+        // Apply the critical flags dynamically as well as in XML. This is useful
+        // on OEM builds that restore an older cached AccessibilityServiceInfo.
+        serviceInfo?.let { info ->
+            info.flags = info.flags or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            setServiceInfo(info)
+        }
+
         WhatsAppUiBridge.attach(this)
         AccessibilityRuntime.connected()
         publishSnapshot(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, force = true)
@@ -38,16 +57,18 @@ class WAAccessibilityService : AccessibilityService() {
             event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
 
         val snapshot = if (force || now - lastSnapshotAt >= SNAPSHOT_THROTTLE_MS) {
-            publishSnapshot(event.eventType, force = force)
+            publishSnapshot(event.eventType, force = force, expectedPackage = packageName)
         } else {
             null
         }
 
-        AccessibilityRuntime.event(
-            packageName = packageName,
-            eventType = event.eventType,
-            nodeCount = snapshot?.nodes?.size ?: AccessibilityRuntime.state.value.nodeCount,
-        )
+        if (snapshot == null) {
+            AccessibilityRuntime.event(
+                packageName = packageName,
+                eventType = event.eventType,
+                nodeCount = AccessibilityRuntime.state.value.nodeCount,
+            )
+        }
     }
 
     override fun onInterrupt() = Unit
@@ -58,11 +79,19 @@ class WAAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    internal fun captureNow(expectedPackage: String? = null): WhatsAppUiSnapshot? = onServiceThreadSnapshot {
+        publishSnapshot(
+            eventType = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            force = true,
+            expectedPackage = expectedPackage,
+        )
+    }
+
     internal fun clickFirstMatching(labels: Set<String>): Boolean = onServiceThread {
         val normalizedLabels = labels.map(::normalize).filter { it.isNotBlank() }
         if (normalizedLabels.isEmpty()) return@onServiceThread false
 
-        val root = rootInActiveWindow ?: return@onServiceThread false
+        val root = resolveWhatsAppRoot()?.root ?: return@onServiceThread false
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.add(root)
         var visited = 0
@@ -84,7 +113,7 @@ class WAAccessibilityService : AccessibilityService() {
         val normalizedLabels = labels.map(::normalize).filter { it.isNotBlank() }
         if (normalizedLabels.isEmpty()) return@onServiceThread false
 
-        val root = rootInActiveWindow ?: return@onServiceThread false
+        val root = resolveWhatsAppRoot()?.root ?: return@onServiceThread false
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.add(root)
         var visited = 0
@@ -102,19 +131,19 @@ class WAAccessibilityService : AccessibilityService() {
     }
 
     internal fun scrollForward(): Boolean = onServiceThread {
-        scrollAny(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        scrollAny(resolveWhatsAppRoot()?.root, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
     }
 
     internal fun scrollBackward(): Boolean = onServiceThread {
-        scrollAny(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        scrollAny(resolveWhatsAppRoot()?.root, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
     }
 
     internal fun scrollPrimaryListForward(): Boolean = onServiceThread {
-        scrollPrimary(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        scrollPrimary(resolveWhatsAppRoot()?.root, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
     }
 
     internal fun scrollPrimaryListBackward(): Boolean = onServiceThread {
-        scrollPrimary(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        scrollPrimary(resolveWhatsAppRoot()?.root, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
     }
 
     internal fun performBack(): Boolean = onServiceThread {
@@ -124,7 +153,7 @@ class WAAccessibilityService : AccessibilityService() {
     private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
         var target: AccessibilityNodeInfo? = node
         var hops = 0
-        while (target != null && !target.isClickable && hops++ < 5) {
+        while (target != null && !target.isClickable && hops++ < 6) {
             target = target.parent
         }
         return target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
@@ -154,8 +183,8 @@ class WAAccessibilityService : AccessibilityService() {
     private fun scrollPrimary(root: AccessibilityNodeInfo?, action: Int): Boolean {
         root ?: return false
         val rootRect = Rect().also { root.getBoundsInScreen(it) }
-        val minWidth = (rootRect.width() * 0.55f).toInt()
-        val minHeight = (rootRect.height() * 0.32f).toInt()
+        val minWidth = (rootRect.width() * 0.50f).toInt()
+        val minHeight = (rootRect.height() * 0.26f).toInt()
         val candidates = ArrayList<Pair<AccessibilityNodeInfo, Rect>>()
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.add(root)
@@ -200,17 +229,22 @@ class WAAccessibilityService : AccessibilityService() {
             .any { it.performAction(action) } || root.performAction(action)
     }
 
-    private fun publishSnapshot(eventType: Int, force: Boolean): WhatsAppUiSnapshot? {
+    private fun publishSnapshot(
+        eventType: Int,
+        force: Boolean,
+        expectedPackage: String? = null,
+    ): WhatsAppUiSnapshot? {
         val now = System.currentTimeMillis()
         if (!force && now - lastSnapshotAt < SNAPSHOT_THROTTLE_MS) return null
-        lastSnapshotAt = now
 
-        val root = rootInActiveWindow ?: return null
+        val selection = resolveWhatsAppRoot(expectedPackage) ?: return null
+        val root = selection.root
         val packageName = root.packageName?.toString() ?: return null
         if (packageName !in TARGET_PACKAGES) return null
 
+        lastSnapshotAt = now
         val rootRect = Rect().also { root.getBoundsInScreen(it) }
-        val nodes = ArrayList<WhatsAppUiNode>(256)
+        val nodes = ArrayList<WhatsAppUiNode>(384)
         val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
         stack.add(root to 0)
 
@@ -218,8 +252,8 @@ class WAAccessibilityService : AccessibilityService() {
             val (node, depth) = stack.removeLast()
             val rect = Rect().also { node.getBoundsInScreen(it) }
             nodes += WhatsAppUiNode(
-                text = node.text?.toString()?.take(180),
-                contentDescription = node.contentDescription?.toString()?.take(180),
+                text = node.text?.toString()?.take(220),
+                contentDescription = node.contentDescription?.toString()?.take(220),
                 className = node.className?.toString(),
                 viewId = node.viewIdResourceName,
                 clickable = node.isClickable,
@@ -235,13 +269,82 @@ class WAAccessibilityService : AccessibilityService() {
             }
         }
 
-        return WhatsAppUiSnapshot(
+        val snapshot = WhatsAppUiSnapshot(
             packageName = packageName,
             eventType = eventType,
             capturedAt = now,
             rootBounds = RectSnapshot.from(rootRect),
             nodes = nodes,
-        ).also(WhatsAppUiBridge::publish)
+        )
+
+        AccessibilityRuntime.capture(
+            packageName = packageName,
+            eventType = eventType,
+            nodeCount = nodes.size,
+            textNodeCount = nodes.count { !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank() },
+            scrollableNodeCount = nodes.count { it.scrollable },
+            interactiveWindowCount = selection.interactiveWindowCount,
+            captureSource = selection.source,
+            capturedAt = now,
+        )
+        WhatsAppUiBridge.publish(snapshot)
+        return snapshot
+    }
+
+    private fun resolveWhatsAppRoot(expectedPackage: String? = null): RootSelection? {
+        val interactiveWindows = runCatching { windows.orEmpty() }.getOrDefault(emptyList())
+        val candidates = ArrayList<Triple<AccessibilityNodeInfo, String, Long>>()
+
+        rootInActiveWindow?.let { root ->
+            val pkg = root.packageName?.toString()
+            if (pkg in TARGET_PACKAGES) {
+                candidates += Triple(root, "ACTIVE_ROOT", rootScore(root, pkg, expectedPackage, active = true, focused = true))
+            }
+        }
+
+        interactiveWindows.forEachIndexed { index, window ->
+            val root = window.root ?: return@forEachIndexed
+            val pkg = root.packageName?.toString()
+            if (pkg !in TARGET_PACKAGES) return@forEachIndexed
+            candidates += Triple(
+                root,
+                "WINDOW[$index]:${windowTypeName(window.type)}",
+                rootScore(root, pkg, expectedPackage, window.isActive, window.isFocused),
+            )
+        }
+
+        if (candidates.isEmpty()) return null
+        val expectedMatches = if (expectedPackage.isNullOrBlank()) {
+            candidates
+        } else {
+            candidates.filter { (root, _, _) -> root.packageName?.toString() == expectedPackage }
+                .ifEmpty { candidates }
+        }
+        val best = expectedMatches.maxByOrNull { it.third } ?: return null
+        return RootSelection(best.first, best.second, interactiveWindows.size)
+    }
+
+    private fun rootScore(
+        root: AccessibilityNodeInfo,
+        packageName: String?,
+        expectedPackage: String?,
+        active: Boolean,
+        focused: Boolean,
+    ): Long {
+        val rect = Rect().also { root.getBoundsInScreen(it) }
+        var score = rect.width().toLong() * rect.height().toLong()
+        if (packageName == expectedPackage && expectedPackage != null) score += 4_000_000_000L
+        if (active) score += 2_000_000_000L
+        if (focused) score += 1_000_000_000L
+        return score
+    }
+
+    private fun windowTypeName(type: Int): String = when (type) {
+        AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
+        AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "IME"
+        AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
+        AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "A11Y_OVERLAY"
+        else -> type.toString()
     }
 
     private fun onServiceThread(block: () -> Boolean): Boolean {
@@ -250,6 +353,18 @@ class WAAccessibilityService : AccessibilityService() {
         var result = false
         mainHandler.post {
             result = runCatching(block).getOrDefault(false)
+            latch.countDown()
+        }
+        latch.await(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        return result
+    }
+
+    private fun onServiceThreadSnapshot(block: () -> WhatsAppUiSnapshot?): WhatsAppUiSnapshot? {
+        if (Looper.myLooper() == Looper.getMainLooper()) return runCatching(block).getOrNull()
+        val latch = CountDownLatch(1)
+        var result: WhatsAppUiSnapshot? = null
+        mainHandler.post {
+            result = runCatching(block).getOrNull()
             latch.countDown()
         }
         latch.await(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)

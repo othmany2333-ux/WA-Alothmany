@@ -12,8 +12,8 @@ import java.lang.ref.WeakReference
 
 /**
  * In-process bridge between WAAccessibilityService and automation engines.
- * It only keeps the current WhatsApp UI snapshot in memory. Persisted data is
- * limited to the group/contact results explicitly produced by an engine.
+ * Raw WhatsApp UI snapshots stay in memory only. Persisted data is limited to
+ * the explicit group/contact results produced by an engine.
  */
 object WhatsAppUiBridge {
     private var serviceRef = WeakReference<WAAccessibilityService>(null)
@@ -23,7 +23,7 @@ object WhatsAppUiBridge {
 
     private val _events = MutableSharedFlow<WhatsAppUiSnapshot>(
         replay = 0,
-        extraBufferCapacity = 8,
+        extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val events: SharedFlow<WhatsAppUiSnapshot> = _events.asSharedFlow()
@@ -43,15 +43,15 @@ object WhatsAppUiBridge {
 
     fun serviceConnected(): Boolean = serviceRef.get() != null
 
-    /** Legacy fuzzy click kept for other modules. Smart Sync v0.3.1 does not use it. */
+    /** Force a fresh snapshot instead of waiting for a new Android event. */
+    fun captureNow(expectedPackage: String? = null): WhatsAppUiSnapshot? =
+        serviceRef.get()?.captureNow(expectedPackage)
+
+    /** Legacy fuzzy click kept for other modules. */
     fun clickFirstMatching(labels: Set<String>): Boolean =
         serviceRef.get()?.clickFirstMatching(labels).orFalse()
 
-    /**
-     * Conservative click for navigation tabs / Archived. It only accepts an exact
-     * label or a label-prefixed accessibility description, preventing a request
-     * for "Chats" from clicking "Search chats".
-     */
+    /** Conservative click for navigation tabs / Archived. */
     fun clickSafeMatching(labels: Set<String>): Boolean =
         serviceRef.get()?.clickSafeMatching(labels).orFalse()
 

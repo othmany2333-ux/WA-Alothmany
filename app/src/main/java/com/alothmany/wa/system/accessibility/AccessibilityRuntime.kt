@@ -26,4 +26,28 @@ object AccessibilityRuntime {
             lastEventAt = System.currentTimeMillis(),
         )
     }
+
+    fun capture(
+        packageName: String,
+        eventType: Int,
+        nodeCount: Int,
+        textNodeCount: Int,
+        scrollableNodeCount: Int,
+        interactiveWindowCount: Int,
+        captureSource: String,
+        capturedAt: Long,
+    ) {
+        _state.value = _state.value.copy(
+            serviceConnected = true,
+            lastPackage = packageName,
+            lastEventType = eventType,
+            nodeCount = nodeCount,
+            textNodeCount = textNodeCount,
+            scrollableNodeCount = scrollableNodeCount,
+            interactiveWindowCount = interactiveWindowCount,
+            captureSource = captureSource,
+            lastSnapshotAt = capturedAt,
+            lastEventAt = System.currentTimeMillis(),
+        )
+    }
 }

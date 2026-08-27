@@ -70,6 +70,22 @@ class WhatsAppScreenDetectorTest {
         assertEquals(WhatsAppSurface.CHANNELS_OR_UPDATES, detector.classify(snapshot, parser.parse(snapshot)))
     }
 
+    @Test
+    fun samsungStyleNonClickableRowsStillCountAsChats() {
+        val snapshot = snapshot(
+            listOf(
+                label("الدردشات", 80),
+                nonClickableText(260, "طلاب الجامعة"),
+                nonClickableText(330, "~ Ahmed: المحاضرة"),
+                nonClickableText(470, "محمد"),
+                nonClickableText(540, "مرحبا"),
+                nonClickableText(680, "قروب التقنية"),
+                nonClickableText(750, "~ Khaled: تحديث"),
+            ).flatten()
+        )
+        assertEquals(WhatsAppSurface.CHAT_LIST, detector.classify(snapshot, parser.parse(snapshot)))
+    }
+
     private fun snapshot(nodes: List<WhatsAppUiNode>) = WhatsAppUiSnapshot(
         packageName = "com.whatsapp",
         eventType = 0,
@@ -91,6 +107,14 @@ class WhatsAppScreenDetectorTest {
             text = text, contentDescription = text, className = "android.widget.TextView", viewId = "label",
             clickable = false, scrollable = false, enabled = true, depth = 3,
             bounds = RectSnapshot(100, top, 900, top + 60),
+        )
+    )
+
+    private fun nonClickableText(top: Int, text: String) = listOf(
+        WhatsAppUiNode(
+            text = text, contentDescription = null, className = "android.widget.TextView", viewId = null,
+            clickable = false, scrollable = false, enabled = true, depth = 5,
+            bounds = RectSnapshot(220, top, 980, top + 52),
         )
     )
 

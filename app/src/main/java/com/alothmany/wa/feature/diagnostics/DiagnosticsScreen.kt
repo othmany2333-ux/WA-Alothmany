@@ -23,6 +23,7 @@ fun DiagnosticsScreen(
     viewModel: DiagnosticsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val capture by viewModel.capture.collectAsState()
 
     Column(
         Modifier
@@ -50,7 +51,7 @@ fun DiagnosticsScreen(
         )
         DiagnosticRow(stringResource(R.string.app_version), BuildConfig.VERSION_NAME)
         DiagnosticRow(stringResource(R.string.database_status), stringResource(R.string.healthy))
-        DiagnosticRow(stringResource(R.string.core_status), stringResource(R.string.phase_two))
+        DiagnosticRow(stringResource(R.string.core_status), "Smart Sync v0.3.5")
 
         SectionHeader(stringResource(R.string.shizuku))
         DiagnosticRow(stringResource(R.string.capability_status), state.shizuku.status.name)
@@ -75,14 +76,15 @@ fun DiagnosticsScreen(
             stringResource(R.string.service_connected),
             state.accessibility.serviceConnected.toString(),
         )
-        DiagnosticRow(
-            stringResource(R.string.last_ui_event),
-            state.accessibility.lastPackage ?: "-",
-        )
-        DiagnosticRow(
-            stringResource(R.string.accessibility_nodes),
-            state.accessibility.nodeCount.toString(),
-        )
+        DiagnosticRow("آخر حزمة / Last package", state.accessibility.lastPackage ?: "-")
+        DiagnosticRow(stringResource(R.string.accessibility_nodes), state.accessibility.nodeCount.toString())
+        DiagnosticRow("عناصر نصية / Text nodes", state.accessibility.textNodeCount.toString())
+        DiagnosticRow("عناصر قابلة للتمرير / Scrollable", state.accessibility.scrollableNodeCount.toString())
+        DiagnosticRow("نوافذ تفاعلية / Windows", state.accessibility.interactiveWindowCount.toString())
+        DiagnosticRow("مصدر الالتقاط / Capture", state.accessibility.captureSource ?: "-")
+        DiagnosticRow("الشاشة المكتشفة / Surface", capture.surface)
+        DiagnosticRow("صفوف الدردشات / Chat rows", capture.chatRows.toString())
+        DiagnosticRow("مرشحو القروبات / Groups", capture.groupCandidates.toString())
 
         SectionHeader(stringResource(R.string.overlay))
         DiagnosticRow(

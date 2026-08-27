@@ -40,7 +40,7 @@ import javax.inject.Singleton
 import kotlin.math.roundToLong
 
 /**
- * Smart Sync v0.3.3 - independent group discovery.
+ * Smart Sync v0.3.5 - independent group discovery.
  *
  * Open WhatsApp -> recover to Chats -> read all visible rows -> classify groups
  * from multiple signals -> generate stable identity fingerprints -> deduplicate ->
@@ -163,8 +163,11 @@ class SmartSyncEngine @Inject constructor(
 
             val prefs = settings.preferences.first()
             val integrationState = integration.state.value
-            if (!integrationState.accessibility.enabled) {
-                fail("خدمة Accessibility غير مفعلة")
+            if (!integrationState.accessibility.enabled &&
+                !integrationState.accessibility.serviceConnected &&
+                !WhatsAppUiBridge.serviceConnected()
+            ) {
+                fail("خدمة Accessibility غير مفعلة أو غير متصلة")
                 return
             }
 
@@ -201,13 +204,15 @@ class SmartSyncEngine @Inject constructor(
 
             val launchAt = System.currentTimeMillis()
             context.startActivity(launchIntent)
-            logger.info("SYNC", "Opened ${source.packageName} for Smart Sync v0.3.3")
+            logger.info("SYNC", "Opened ${source.packageName} for Smart Sync v0.3.5")
 
-            val initialSnapshot = awaitSnapshot(
-                packageName = source.packageName,
-                after = launchAt - 350,
-                timeoutMs = 6_000,
-            )
+            delay(220)
+            val initialSnapshot = WhatsAppUiBridge.captureNow(source.packageName)
+                ?: awaitSnapshot(
+                    packageName = source.packageName,
+                    after = launchAt - 350,
+                    timeoutMs = 6_000,
+                )
             if (initialSnapshot == null) {
                 fail("لم تصل شجرة واجهة واتساب إلى Accessibility")
                 return
@@ -312,7 +317,7 @@ class SmartSyncEngine @Inject constructor(
             checkpointDao.delete(runId)
             logger.success(
                 "SYNC",
-                "Smart Sync v0.3.3 completed: ${accumulator.seenIds.size} group(s), ${accumulator.newCount} new"
+                "Smart Sync v0.3.5 completed: ${accumulator.seenIds.size} group(s), ${accumulator.newCount} new"
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -343,6 +348,7 @@ class SmartSyncEngine @Inject constructor(
             if (stopRequested.get()) return null
             awaitResumeIfPaused()
 
+            WhatsAppUiBridge.captureNow(packageName)?.let { fresh -> current = fresh }
             val parsed = parser.parse(current)
             when (screenDetector.classify(current, parsed)) {
                 WhatsAppSurface.CHAT_LIST -> return current
@@ -410,6 +416,7 @@ class SmartSyncEngine @Inject constructor(
             awaitResumeIfPaused()
             if (stopRequested.get()) break
 
+            WhatsAppUiBridge.captureNow(packageName)?.let { fresh -> snapshot = fresh }
             val parsed = parser.parse(snapshot)
             val surface = screenDetector.classify(snapshot, parsed)
             val allowedSurface = if (archived) {
