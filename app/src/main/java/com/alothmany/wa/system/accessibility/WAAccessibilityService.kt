@@ -74,61 +74,122 @@ class WAAccessibilityService : AccessibilityService() {
                 text == label || description == label ||
                     (label.length >= 4 && (text.contains(label) || description.contains(label)))
             }
-            if (matches) {
-                var target: AccessibilityNodeInfo? = node
-                var hops = 0
-                while (target != null && !target.isClickable && hops++ < 5) {
-                    target = target.parent
-                }
-                if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return@onServiceThread true
+            if (matches && clickNodeOrParent(node)) return@onServiceThread true
+            for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
+        }
+        false
+    }
+
+    internal fun clickSafeMatching(labels: Set<String>): Boolean = onServiceThread {
+        val normalizedLabels = labels.map(::normalize).filter { it.isNotBlank() }
+        if (normalizedLabels.isEmpty()) return@onServiceThread false
+
+        val root = rootInActiveWindow ?: return@onServiceThread false
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        var visited = 0
+        while (stack.isNotEmpty() && visited++ < MAX_NODES) {
+            val node = stack.removeLast()
+            val text = normalize(node.text?.toString())
+            val description = normalize(node.contentDescription?.toString())
+            val matches = normalizedLabels.any { label ->
+                safeLabelMatch(text, label) || safeLabelMatch(description, label)
             }
+            if (matches && clickNodeOrParent(node)) return@onServiceThread true
             for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
         }
         false
     }
 
     internal fun scrollForward(): Boolean = onServiceThread {
-        val root = rootInActiveWindow ?: return@onServiceThread false
-        val candidates = ArrayList<AccessibilityNodeInfo>()
-        val stack = ArrayDeque<AccessibilityNodeInfo>()
-        stack.add(root)
-        var visited = 0
-        while (stack.isNotEmpty() && visited++ < MAX_NODES) {
-            val node = stack.removeLast()
-            if (node.isScrollable) candidates += node
-            for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
-        }
-        candidates
-            .sortedByDescending { node ->
-                val r = Rect().also { node.getBoundsInScreen(it) }
-                r.width().toLong() * r.height().toLong()
-            }
-            .any { it.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) } ||
-            root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        scrollAny(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
     }
 
     internal fun scrollBackward(): Boolean = onServiceThread {
-        val root = rootInActiveWindow ?: return@onServiceThread false
-        val candidates = ArrayList<AccessibilityNodeInfo>()
-        val stack = ArrayDeque<AccessibilityNodeInfo>()
-        stack.add(root)
-        var visited = 0
-        while (stack.isNotEmpty() && visited++ < MAX_NODES) {
-            val node = stack.removeLast()
-            if (node.isScrollable) candidates += node
-            for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
-        }
-        candidates
-            .sortedByDescending { node ->
-                val r = Rect().also { node.getBoundsInScreen(it) }
-                r.width().toLong() * r.height().toLong()
-            }
-            .any { it.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) } ||
-            root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        scrollAny(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+    }
+
+    internal fun scrollPrimaryListForward(): Boolean = onServiceThread {
+        scrollPrimary(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+    }
+
+    internal fun scrollPrimaryListBackward(): Boolean = onServiceThread {
+        scrollPrimary(rootInActiveWindow, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
     }
 
     internal fun performBack(): Boolean = onServiceThread {
         performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+
+    private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
+        var target: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (target != null && !target.isClickable && hops++ < 5) {
+            target = target.parent
+        }
+        return target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    private fun safeLabelMatch(candidate: String, label: String): Boolean {
+        if (candidate == label) return true
+        if (!candidate.startsWith(label)) return false
+        if (candidate.length == label.length) return true
+        val suffix = candidate.substring(label.length).trimStart()
+        if (suffix.isEmpty()) return true
+        return suffix.first() in setOf(',', '،', '-', '·', '•', ':') ||
+            suffix.startsWith("tab") ||
+            suffix.startsWith("علامة تبويب") ||
+            suffix.startsWith("غير مقرو") ||
+            suffix.startsWith("unread")
+    }
+
+    private fun scrollPrimary(root: AccessibilityNodeInfo?, action: Int): Boolean {
+        root ?: return false
+        val rootRect = Rect().also { root.getBoundsInScreen(it) }
+        val minWidth = (rootRect.width() * 0.55f).toInt()
+        val minHeight = (rootRect.height() * 0.32f).toInt()
+        val candidates = ArrayList<Pair<AccessibilityNodeInfo, Rect>>()
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        var visited = 0
+        while (stack.isNotEmpty() && visited++ < MAX_NODES) {
+            val node = stack.removeLast()
+            if (node.isScrollable) {
+                val rect = Rect().also { node.getBoundsInScreen(it) }
+                if (rect.width() >= minWidth && rect.height() >= minHeight) {
+                    candidates += node to rect
+                }
+            }
+            for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
+        }
+
+        val primaryWorked = candidates
+            .sortedWith(
+                compareByDescending<Pair<AccessibilityNodeInfo, Rect>> { it.second.height() }
+                    .thenByDescending { it.second.width().toLong() * it.second.height().toLong() }
+            )
+            .any { (node, _) -> node.performAction(action) }
+
+        return primaryWorked || scrollAny(root, action)
+    }
+
+    private fun scrollAny(root: AccessibilityNodeInfo?, action: Int): Boolean {
+        root ?: return false
+        val candidates = ArrayList<AccessibilityNodeInfo>()
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        var visited = 0
+        while (stack.isNotEmpty() && visited++ < MAX_NODES) {
+            val node = stack.removeLast()
+            if (node.isScrollable) candidates += node
+            for (index in 0 until node.childCount) node.getChild(index)?.let(stack::add)
+        }
+        return candidates
+            .sortedByDescending { node ->
+                val r = Rect().also { node.getBoundsInScreen(it) }
+                r.width().toLong() * r.height().toLong()
+            }
+            .any { it.performAction(action) } || root.performAction(action)
     }
 
     private fun publishSnapshot(eventType: Int, force: Boolean): WhatsAppUiSnapshot? {

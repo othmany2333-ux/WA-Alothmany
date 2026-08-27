@@ -79,4 +79,6 @@ data class ParsedGroupScreen(
     val groups: List<ParsedGroupCandidate>,
     val screenFingerprint: String,
     val looksLikeGroupList: Boolean,
+    val hasArchivedEntry: Boolean = false,
+    val chatRowCount: Int = 0,
 )

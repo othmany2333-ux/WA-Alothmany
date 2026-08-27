@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.alothmany.wa.R
-import com.alothmany.wa.core.navigation.Destination
 import com.alothmany.wa.core.ui.components.GlassCard
 import com.alothmany.wa.core.ui.components.SectionTitle
 import com.alothmany.wa.core.ui.theme.*
@@ -220,44 +219,6 @@ fun SyncScreen(
                     stringResource(R.string.contact_sync_phase_note),
                     color = Gold400,
                     fontSize = 11.sp,
-                )
-            }
-
-            GlassCard(accent = Gold400) {
-                SectionTitle(stringResource(R.string.link_sync_operations))
-                OperationRow(
-                    selected = state.selectedCount > 0,
-                    firstText = R.string.link_extract,
-                    firstIcon = Icons.Rounded.Link,
-                    firstColor = Teal400,
-                    secondText = R.string.link_publish,
-                    secondIcon = Icons.Rounded.Campaign,
-                    secondColor = Blue400,
-                    onFirst = {
-                        viewModel.prepareLinkedOperation()
-                        onNavigate(Destination.Extract.route)
-                    },
-                    onSecond = {
-                        viewModel.prepareLinkedOperation()
-                        onNavigate(Destination.Publish.route)
-                    },
-                )
-                OperationRow(
-                    selected = state.selectedCount > 0,
-                    firstText = R.string.link_join,
-                    firstIcon = Icons.Rounded.GroupAdd,
-                    firstColor = Purple400,
-                    secondText = R.string.link_delete,
-                    secondIcon = Icons.Rounded.DeleteForever,
-                    secondColor = Red400,
-                    onFirst = {
-                        viewModel.prepareLinkedOperation()
-                        onNavigate(Destination.Join.route)
-                    },
-                    onSecond = {
-                        viewModel.prepareLinkedOperation()
-                        onNavigate(Destination.Delete.route)
-                    },
                 )
             }
 

@@ -39,6 +39,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToLong
 
+/**
+ * Smart Sync v0.3.1
+ *
+ * Independent sync path:
+ * 1) Open the selected original WhatsApp app.
+ * 2) Recover to the Chats tab using conservative exact/prefix navigation.
+ * 3) Rewind the normal chat list to the top and scan it to the end.
+ * 4) Detect group rows from chat-row evidence without clicking the Groups search filter.
+ * 5) If Archived exists, return to top, open Archived and scan it to the end.
+ * 6) Persist detected group names to Room; the Sync UI observes Room and shows them.
+ *
+ * No extract/publish/join/delete engine is invoked from this class.
+ */
 @Singleton
 class SmartSyncEngine @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -54,11 +67,13 @@ class SmartSyncEngine @Inject constructor(
     companion object {
         private const val MAX_SCREENS_PER_RUN = 3500
         private const val END_CONFIRMATION_PASSES = 2
-        private val GROUP_FILTER_LABELS = setOf(
-            "Groups", "Group", "المجموعات", "القروبات", "مجموعات", "قروبات"
-        )
+        private const val MAX_CHAT_HOME_RECOVERY_ATTEMPTS = 7
+
         private val CHAT_TAB_LABELS = setOf(
-            "Chats", "Chat", "المحادثات", "الدردشات", "محادثات"
+            "Chats", "Chat", "المحادثات", "الدردشات", "محادثات", "دردشات"
+        )
+        private val ARCHIVED_LABELS = setOf(
+            "Archived", "Archived chats", "مؤرشفة", "المؤرشفة", "المؤرشف", "الدردشات المؤرشفة"
         )
     }
 
@@ -70,6 +85,19 @@ class SmartSyncEngine @Inject constructor(
     private val stopRequested = AtomicBoolean(false)
     private var runJob: Job? = null
 
+    private data class RunAccumulator(
+        val existingIds: Set<String>,
+        val existingMeta: Map<String, GroupSyncMetaEntity>,
+        val seenIds: LinkedHashSet<String> = linkedSetOf(),
+        var newCount: Int = 0,
+        var processedScreens: Int = 0,
+    )
+
+    private data class SectionResult(
+        val lastSnapshot: WhatsAppUiSnapshot,
+        val sawArchivedEntry: Boolean,
+    )
+
     fun start() {
         if (runJob?.isActive == true) return
         stopRequested.set(false)
@@ -80,7 +108,13 @@ class SmartSyncEngine @Inject constructor(
     fun pause() {
         if (!_state.value.running) return
         pauseRequested.value = true
-        _state.update { it.copy(status = SyncEngineStatus.PAUSED, message = "Paused", updatedAt = System.currentTimeMillis()) }
+        _state.update {
+            it.copy(
+                status = SyncEngineStatus.PAUSED,
+                message = "تم إيقاف المزامنة مؤقتًا",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
         persistRuntimeAsync()
         logger.info("SYNC", "Smart Sync paused")
     }
@@ -88,7 +122,13 @@ class SmartSyncEngine @Inject constructor(
     fun resume() {
         if (_state.value.status != SyncEngineStatus.PAUSED) return
         pauseRequested.value = false
-        _state.update { it.copy(status = SyncEngineStatus.RECOVERING, message = "Resuming", updatedAt = System.currentTimeMillis()) }
+        _state.update {
+            it.copy(
+                status = SyncEngineStatus.RECOVERING,
+                message = "جاري استكمال المزامنة",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
         logger.info("SYNC", "Smart Sync resumed")
     }
 
@@ -102,13 +142,14 @@ class SmartSyncEngine @Inject constructor(
         val startedAt = System.currentTimeMillis()
         val runId = UUID.randomUUID().toString()
         var sourceId: String? = null
+
         try {
             updateState(
                 SyncRuntimeState(
                     runId = runId,
                     status = SyncEngineStatus.PREPARING,
                     stage = SyncStage.NORMAL_GROUPS,
-                    message = "Preparing capabilities",
+                    message = "جاري تجهيز المزامنة",
                     startedAt = startedAt,
                     updatedAt = startedAt,
                 )
@@ -123,20 +164,23 @@ class SmartSyncEngine @Inject constructor(
 
             val prefs = settings.preferences.first()
             val integrationState = integration.state.value
-            if (!integrationState.accessibility.enabled || !integrationState.accessibility.serviceConnected || !WhatsAppUiBridge.serviceConnected()) {
-                fail("Accessibility service is not connected")
+            if (!integrationState.accessibility.enabled ||
+                !integrationState.accessibility.serviceConnected ||
+                !WhatsAppUiBridge.serviceConnected()
+            ) {
+                fail("خدمة Accessibility غير متصلة")
                 return
             }
 
             val source = integrationState.sources.firstOrNull { it.sourceType == prefs.selectedSource }
                 ?: integrationState.sources.firstOrNull()
             if (source == null) {
-                fail("No accessible WhatsApp source was detected")
+                fail("لم يتم العثور على مصدر واتساب متاح")
                 return
             }
             sourceId = source.id
             if (!source.launchable) {
-                fail("Selected source is detected but is not directly launchable in this Android profile yet")
+                fail("مصدر واتساب المحدد غير قابل للفتح مباشرة في هذا الملف الشخصي")
                 return
             }
 
@@ -145,7 +189,8 @@ class SmartSyncEngine @Inject constructor(
                     sourceId = source.id,
                     sourceName = source.displayName,
                     status = SyncEngineStatus.OPENING_WHATSAPP,
-                    message = "Opening WhatsApp",
+                    stage = SyncStage.NORMAL_GROUPS,
+                    message = "جاري فتح واتساب",
                     updatedAt = System.currentTimeMillis(),
                 )
             )
@@ -154,11 +199,11 @@ class SmartSyncEngine @Inject constructor(
             val launchIntent = context.packageManager.getLaunchIntentForPackage(source.packageName)
                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
             if (launchIntent == null) {
-                fail("WhatsApp launch intent is unavailable")
+                fail("تعذر الحصول على أمر فتح واتساب")
                 return
             }
             context.startActivity(launchIntent)
-            logger.info("SYNC", "Opened ${source.packageName} for group sync")
+            logger.info("SYNC", "Opened ${source.packageName} for independent chat-list sync")
 
             val initialSnapshot = awaitSnapshot(
                 packageName = source.packageName,
@@ -166,184 +211,84 @@ class SmartSyncEngine @Inject constructor(
                 timeoutMs = 5_000,
             )
             if (initialSnapshot == null) {
-                fail("WhatsApp UI was not visible to Accessibility")
-                return
-            }
-            var snapshot: WhatsAppUiSnapshot = initialSnapshot
-
-            updateStatus(SyncEngineStatus.NAVIGATING, "Opening Groups filter")
-            var groupsReady = false
-            var navigationAttempts = 0
-            while (!groupsReady && navigationAttempts < 5) {
-                navigationAttempts++
-                if (WhatsAppUiBridge.clickFirstMatching(GROUP_FILTER_LABELS)) {
-                    snapshot = awaitSnapshot(source.packageName, snapshot.capturedAt, 2_800) ?: snapshot
-                    groupsReady = true
-                    break
-                }
-
-                // Recover from an open chat / Calls / Updates screen without blind tapping.
-                val before = snapshot.capturedAt
-                val movedToChats = WhatsAppUiBridge.clickFirstMatching(CHAT_TAB_LABELS)
-                if (!movedToChats) WhatsAppUiBridge.performBack()
-                snapshot = awaitSnapshot(source.packageName, before, 1_800) ?: snapshot
-            }
-            if (!groupsReady) {
-                fail("Could not locate the Groups filter after safe navigation recovery")
+                fail("واجهة واتساب غير ظاهرة لخدمة Accessibility")
                 return
             }
 
-            // Always align the list to its beginning before collecting rows. This is
-            // essential when WhatsApp restores a previous scroll position. Two
-            // no-change passes are required so a delayed UI frame is not mistaken for top.
-            updateStatus(SyncEngineStatus.RECOVERING, "Aligning to first group")
+            updateStatus(SyncEngineStatus.NAVIGATING, "جاري الانتقال إلى الدردشات")
+            var snapshot = ensureChatsHome(source.packageName, initialSnapshot)
+            if (snapshot == null) {
+                fail("تعذر الوصول إلى شاشة الدردشات بأمان")
+                return
+            }
+
+            updateStatus(SyncEngineStatus.RECOVERING, "جاري الرجوع إلى بداية المحادثات")
             snapshot = rewindToTop(source.packageName, snapshot)
 
-            updateStatus(SyncEngineStatus.SCANNING, "Scanning groups")
-            logger.info("SYNC", "Group list scan started")
-
             val existingMeta = metaDao.getForSource(source.id).associateBy { it.groupId }
-            val existingIds = existingMeta.keys
-            val seenIds = linkedSetOf<String>()
-            var newCount = 0
-            var processedScreens = 0
-            var endPasses = 0
-            var previousScreenFingerprint: String? = null
-            var eventTimeoutMs = 1_350L
+            val accumulator = RunAccumulator(
+                existingIds = existingMeta.keys,
+                existingMeta = existingMeta,
+            )
 
-            while (!stopRequested.get() && processedScreens < MAX_SCREENS_PER_RUN) {
-                awaitResumeIfPaused()
-                if (stopRequested.get()) break
+            updateStage(SyncStage.NORMAL_GROUPS, SyncEngineStatus.SCANNING, "جاري قراءة المحادثات العادية")
+            val normalResult = scanSection(
+                sourceId = source.id,
+                packageName = source.packageName,
+                runId = runId,
+                initialSnapshot = snapshot,
+                archived = false,
+                accumulator = accumulator,
+            )
 
-                val parsed = parser.parse(snapshot)
-                processedScreens++
-                val now = System.currentTimeMillis()
-                val groupEntities = ArrayList<GroupEntity>(parsed.groups.size)
-                val metaEntities = ArrayList<GroupSyncMetaEntity>(parsed.groups.size)
-                var discoveredThisScreen = 0
-                var newInDatabaseThisScreen = 0
-                var lastName: String? = null
+            if (stopRequested.get()) {
+                finishStopped()
+                return
+            }
 
-                parsed.groups.forEach { candidate ->
-                    val groupId = stableGroupId(source.id, candidate.normalizedName)
-                    val firstTimeThisRun = seenIds.add(groupId)
-                    if (firstTimeThisRun) discoveredThisScreen++
-                    if (firstTimeThisRun && groupId !in existingIds) {
-                        newCount++
-                        newInDatabaseThisScreen++
-                    }
-                    lastName = candidate.displayName
-                    val oldMeta = existingMeta[groupId]
-                    groupEntities += GroupEntity(
-                        id = groupId,
-                        sourceId = source.id,
-                        displayName = candidate.displayName,
-                        archived = false,
-                        isCommunity = false,
-                        memberCount = null,
-                        status = "AVAILABLE",
-                        fingerprint = candidate.rowFingerprint,
-                        lastSyncedAt = now,
-                    )
-                    metaEntities += GroupSyncMetaEntity(
-                        groupId = groupId,
-                        sourceId = source.id,
-                        isUnread = candidate.isUnread,
-                        isActive = true,
-                        isLocked = candidate.isLocked,
-                        isDeleted = false,
-                        isCommunity = false,
-                        confidence = candidate.confidence,
-                        lastSeenRunId = runId,
-                        missingStreak = 0,
-                        firstSeenAt = oldMeta?.firstSeenAt ?: now,
-                        lastSeenAt = now,
-                    )
+            if (normalResult.sawArchivedEntry) {
+                updateStage(SyncStage.ARCHIVED, SyncEngineStatus.RECOVERING, "تم العثور على المؤرشف - جاري فتحه")
+                val topSnapshot = rewindToTop(source.packageName, normalResult.lastSnapshot)
+                val beforeOpen = topSnapshot.capturedAt
+                val opened = WhatsAppUiBridge.clickSafeMatching(ARCHIVED_LABELS)
+                if (!opened) {
+                    fail("تم اكتشاف المؤرشف ولكن تعذر فتحه بأمان")
+                    return
                 }
 
-                if (groupEntities.isNotEmpty()) {
-                    groupDao.upsertAll(groupEntities)
-                    metaDao.upsertAll(metaEntities)
+                val archivedSnapshot = awaitSnapshot(source.packageName, beforeOpen, 2_800)
+                    ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == source.packageName }
+                if (archivedSnapshot == null) {
+                    fail("تم فتح المؤرشف ولكن تعذر قراءة واجهته")
+                    return
                 }
 
-                val currentFingerprint = parsed.screenFingerprint
-                _state.update {
-                    it.copy(
-                        status = SyncEngineStatus.SCANNING,
-                        discoveredCount = seenIds.size,
-                        newCount = newCount,
-                        processedScreens = processedScreens,
-                        currentGroupName = lastName ?: it.currentGroupName,
-                        consecutiveEndPasses = endPasses,
-                        lastScreenFingerprint = currentFingerprint,
-                        message = when {
-                            discoveredThisScreen > 0 -> "Discovered $discoveredThisScreen group(s) on this screen"
-                            newInDatabaseThisScreen > 0 -> "Found $newInDatabaseThisScreen new group(s)"
-                            else -> "Checking for more groups"
-                        },
-                        updatedAt = now,
-                    )
-                }
-                saveCheckpoint()
-                upsertRun()
-
-                val beforeScrollAt = snapshot.capturedAt
-                val scrollStartedAt = System.currentTimeMillis()
-                val scrollAccepted = WhatsAppUiBridge.scrollForward()
-                val nextSnapshot = if (scrollAccepted) {
-                    awaitChangedSnapshot(
-                        packageName = source.packageName,
-                        after = beforeScrollAt,
-                        currentFingerprint = currentFingerprint,
-                        timeoutMs = eventTimeoutMs,
-                    )
-                } else {
-                    null
-                }
-
-                val nextFingerprint = nextSnapshot?.let(parser::parse)?.screenFingerprint
-                val changed = nextSnapshot != null && nextFingerprint != currentFingerprint
-                val noNewOnScreen = discoveredThisScreen == 0
-
-                if (!scrollAccepted || (noNewOnScreen && !changed && currentFingerprint == previousScreenFingerprint)) {
-                    endPasses++
-                    _state.update {
-                        it.copy(
-                            status = SyncEngineStatus.VERIFYING_END,
-                            consecutiveEndPasses = endPasses,
-                            message = "Verifying end $endPasses/$END_CONFIRMATION_PASSES",
-                            updatedAt = System.currentTimeMillis(),
-                        )
-                    }
-                    saveCheckpoint()
-                    if (endPasses >= END_CONFIRMATION_PASSES) break
-                    delay(180)
-                } else {
-                    endPasses = 0
-                }
-
-                if (nextSnapshot != null) {
-                    val latency = (System.currentTimeMillis() - scrollStartedAt).coerceAtLeast(120)
-                    eventTimeoutMs = (latency * 2.15).roundToLong().coerceIn(650L, 2_200L)
-                    snapshot = nextSnapshot
-                } else {
-                    eventTimeoutMs = (eventTimeoutMs + 250).coerceAtMost(2_200L)
-                }
-                previousScreenFingerprint = currentFingerprint
+                val archivedTop = rewindToTop(source.packageName, archivedSnapshot)
+                updateStage(SyncStage.ARCHIVED, SyncEngineStatus.SCANNING, "جاري قراءة المحادثات المؤرشفة")
+                scanSection(
+                    sourceId = source.id,
+                    packageName = source.packageName,
+                    runId = runId,
+                    initialSnapshot = archivedTop,
+                    archived = true,
+                    accumulator = accumulator,
+                )
+            } else {
+                logger.info("SYNC", "No Archived entry detected; archived scan skipped")
             }
 
             if (stopRequested.get()) {
                 finishStopped()
                 return
             }
-            if (processedScreens >= MAX_SCREENS_PER_RUN) {
-                fail("Safety limit reached before the end of the group list was confirmed")
+            if (accumulator.processedScreens >= MAX_SCREENS_PER_RUN) {
+                fail("تم بلوغ حد الأمان قبل تأكيد نهاية القوائم")
                 return
             }
 
-            updateStatus(SyncEngineStatus.VERIFYING_END, "End confirmed twice")
-            // Only a fully completed scan is allowed to age missing groups. Two completed
-            // runs are required before an item becomes 'deleted'. This prevents false loss.
+            updateStage(SyncStage.FINAL_VERIFY, SyncEngineStatus.VERIFYING_END, "تم تأكيد نهاية القوائم")
+
+            // Only a fully completed normal + archived scan is allowed to age missing groups.
             metaDao.markMissingAfterSuccessfulRun(source.id, runId)
             metaDao.promoteVerifiedMissingToDeleted(source.id)
 
@@ -352,32 +297,222 @@ class SmartSyncEngine @Inject constructor(
                 it.copy(
                     status = SyncEngineStatus.COMPLETED,
                     stage = SyncStage.SAVING,
+                    discoveredCount = accumulator.seenIds.size,
+                    newCount = accumulator.newCount,
+                    processedScreens = accumulator.processedScreens,
                     consecutiveEndPasses = END_CONFIRMATION_PASSES,
-                    message = "Group synchronization completed",
+                    message = "اكتملت مزامنة القروبات",
                     updatedAt = completedAt,
                 )
             }
             upsertRun(completedAt = completedAt)
             checkpointDao.delete(runId)
-            logger.success("SYNC", "Smart Sync completed: ${_state.value.discoveredCount} group(s), ${_state.value.newCount} new")
+            logger.success(
+                "SYNC",
+                "Independent Smart Sync completed: ${accumulator.seenIds.size} group(s), ${accumulator.newCount} new"
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
             fail(t.message ?: t.javaClass.simpleName)
         } finally {
-            if (_state.value.status !in setOf(SyncEngineStatus.COMPLETED, SyncEngineStatus.STOPPED, SyncEngineStatus.ERROR)) {
+            if (_state.value.status !in setOf(
+                    SyncEngineStatus.COMPLETED,
+                    SyncEngineStatus.STOPPED,
+                    SyncEngineStatus.ERROR,
+                )
+            ) {
                 sourceId?.let { logger.warning("SYNC", "Sync run ended without terminal state for $it") }
             }
         }
     }
 
-    private suspend fun awaitResumeIfPaused() {
-        if (!pauseRequested.value) return
-        _state.update { it.copy(status = SyncEngineStatus.PAUSED, message = "Paused safely", updatedAt = System.currentTimeMillis()) }
-        pauseRequested.first { paused -> !paused || stopRequested.get() }
-        if (!stopRequested.get()) updateStatus(SyncEngineStatus.RECOVERING, "Resuming from checkpoint")
+    /**
+     * Recover from Search, an open chat, Updates/Channels, or another restored
+     * WhatsApp surface. We never search for or click the Groups filter here.
+     */
+    private suspend fun ensureChatsHome(
+        packageName: String,
+        initial: WhatsAppUiSnapshot,
+    ): WhatsAppUiSnapshot? {
+        var current = initial
+        repeat(MAX_CHAT_HOME_RECOVERY_ATTEMPTS) {
+            if (stopRequested.get()) return null
+            awaitResumeIfPaused()
+
+            val before = current.capturedAt
+            if (WhatsAppUiBridge.clickSafeMatching(CHAT_TAB_LABELS)) {
+                delay(120)
+                val changed = awaitSnapshot(packageName, before, 1_500)
+                val latest = WhatsAppUiBridge.latest.value
+                return changed
+                    ?: latest?.takeIf { it.packageName == packageName }
+                    ?: current
+            }
+
+            if (!WhatsAppUiBridge.performBack()) return null
+            current = awaitSnapshot(packageName, before, 1_500)
+                ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == packageName }
+                ?: current
+        }
+        return null
     }
 
+    private suspend fun scanSection(
+        sourceId: String,
+        packageName: String,
+        runId: String,
+        initialSnapshot: WhatsAppUiSnapshot,
+        archived: Boolean,
+        accumulator: RunAccumulator,
+    ): SectionResult {
+        var snapshot = initialSnapshot
+        var endPasses = 0
+        var eventTimeoutMs = 1_250L
+        var sawArchivedEntry = false
+
+        while (!stopRequested.get() && accumulator.processedScreens < MAX_SCREENS_PER_RUN) {
+            awaitResumeIfPaused()
+            if (stopRequested.get()) break
+
+            val parsed = parser.parse(snapshot)
+            accumulator.processedScreens++
+            if (!archived && parsed.hasArchivedEntry) sawArchivedEntry = true
+
+            val now = System.currentTimeMillis()
+            val groupEntities = ArrayList<GroupEntity>(parsed.groups.size)
+            val metaEntities = ArrayList<GroupSyncMetaEntity>(parsed.groups.size)
+            var discoveredThisScreen = 0
+            var newInDatabaseThisScreen = 0
+            var lastName: String? = null
+
+            parsed.groups.forEach { candidate ->
+                val groupId = stableGroupId(sourceId, candidate.normalizedName)
+                val firstTimeThisRun = accumulator.seenIds.add(groupId)
+                if (firstTimeThisRun) discoveredThisScreen++
+                if (firstTimeThisRun && groupId !in accumulator.existingIds) {
+                    accumulator.newCount++
+                    newInDatabaseThisScreen++
+                }
+                lastName = candidate.displayName
+                val oldMeta = accumulator.existingMeta[groupId]
+
+                groupEntities += GroupEntity(
+                    id = groupId,
+                    sourceId = sourceId,
+                    displayName = candidate.displayName,
+                    archived = archived,
+                    isCommunity = false,
+                    memberCount = null,
+                    status = "AVAILABLE",
+                    fingerprint = candidate.rowFingerprint,
+                    lastSyncedAt = now,
+                )
+                metaEntities += GroupSyncMetaEntity(
+                    groupId = groupId,
+                    sourceId = sourceId,
+                    isUnread = candidate.isUnread,
+                    isActive = true,
+                    isLocked = candidate.isLocked,
+                    isDeleted = false,
+                    isCommunity = false,
+                    confidence = candidate.confidence,
+                    lastSeenRunId = runId,
+                    missingStreak = 0,
+                    firstSeenAt = oldMeta?.firstSeenAt ?: now,
+                    lastSeenAt = now,
+                )
+            }
+
+            if (groupEntities.isNotEmpty()) {
+                groupDao.upsertAll(groupEntities)
+                metaDao.upsertAll(metaEntities)
+            }
+
+            val currentFingerprint = parsed.screenFingerprint
+            _state.update {
+                it.copy(
+                    status = SyncEngineStatus.SCANNING,
+                    stage = if (archived) SyncStage.ARCHIVED else SyncStage.NORMAL_GROUPS,
+                    discoveredCount = accumulator.seenIds.size,
+                    newCount = accumulator.newCount,
+                    processedScreens = accumulator.processedScreens,
+                    currentGroupName = lastName ?: it.currentGroupName,
+                    consecutiveEndPasses = endPasses,
+                    lastScreenFingerprint = currentFingerprint,
+                    message = when {
+                        discoveredThisScreen > 0 && archived -> "تم اكتشاف $discoveredThisScreen قروب مؤرشف"
+                        discoveredThisScreen > 0 -> "تم اكتشاف $discoveredThisScreen قروب في هذه الشاشة"
+                        newInDatabaseThisScreen > 0 -> "تم العثور على $newInDatabaseThisScreen قروب جديد"
+                        else -> "جاري قراءة بقية المحادثات"
+                    },
+                    updatedAt = now,
+                )
+            }
+            saveCheckpoint()
+            upsertRun()
+
+            val beforeScrollAt = snapshot.capturedAt
+            val scrollStartedAt = System.currentTimeMillis()
+            val scrollAccepted = WhatsAppUiBridge.scrollPrimaryListForward()
+            val nextSnapshot = if (scrollAccepted) {
+                awaitChangedSnapshot(
+                    packageName = packageName,
+                    after = beforeScrollAt,
+                    currentFingerprint = currentFingerprint,
+                    timeoutMs = eventTimeoutMs,
+                )
+            } else {
+                null
+            }
+
+            val changed = nextSnapshot != null
+            if (!scrollAccepted || !changed) {
+                endPasses++
+                _state.update {
+                    it.copy(
+                        status = SyncEngineStatus.VERIFYING_END,
+                        consecutiveEndPasses = endPasses,
+                        message = "جاري التحقق من نهاية القائمة $endPasses/$END_CONFIRMATION_PASSES",
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                }
+                saveCheckpoint()
+                if (endPasses >= END_CONFIRMATION_PASSES) break
+                delay(180)
+            } else {
+                endPasses = 0
+            }
+
+            if (nextSnapshot != null) {
+                val latency = (System.currentTimeMillis() - scrollStartedAt).coerceAtLeast(120)
+                eventTimeoutMs = (latency * 2.10).roundToLong().coerceIn(600L, 2_200L)
+                snapshot = nextSnapshot
+            } else {
+                eventTimeoutMs = (eventTimeoutMs + 220).coerceAtMost(2_200L)
+            }
+        }
+
+        return SectionResult(
+            lastSnapshot = snapshot,
+            sawArchivedEntry = sawArchivedEntry,
+        )
+    }
+
+    private suspend fun awaitResumeIfPaused() {
+        if (!pauseRequested.value) return
+        _state.update {
+            it.copy(
+                status = SyncEngineStatus.PAUSED,
+                message = "المزامنة متوقفة مؤقتًا وتم حفظ التقدم",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
+        pauseRequested.first { paused -> !paused || stopRequested.get() }
+        if (!stopRequested.get()) {
+            updateStatus(SyncEngineStatus.RECOVERING, "جاري الاستكمال من نقطة الحفظ")
+        }
+    }
 
     private suspend fun rewindToTop(
         packageName: String,
@@ -390,19 +525,21 @@ class SmartSyncEngine @Inject constructor(
             awaitResumeIfPaused()
             if (stopRequested.get()) break
             attempts++
+
             val fingerprint = parser.parse(current).screenFingerprint
             val before = current.capturedAt
-            val accepted = WhatsAppUiBridge.scrollBackward()
+            val accepted = WhatsAppUiBridge.scrollPrimaryListBackward()
             val previous = if (accepted) {
                 awaitChangedSnapshot(
                     packageName = packageName,
                     after = before,
                     currentFingerprint = fingerprint,
-                    timeoutMs = 900L,
+                    timeoutMs = 850L,
                 )
             } else {
                 null
             }
+
             if (previous == null) {
                 noChangePasses++
                 delay(100)
@@ -433,7 +570,11 @@ class SmartSyncEngine @Inject constructor(
         }
     }
 
-    private suspend fun awaitSnapshot(packageName: String, after: Long, timeoutMs: Long): WhatsAppUiSnapshot? {
+    private suspend fun awaitSnapshot(
+        packageName: String,
+        after: Long,
+        timeoutMs: Long,
+    ): WhatsAppUiSnapshot? {
         val latest = WhatsAppUiBridge.latest.value
         if (latest != null && latest.packageName == packageName && latest.capturedAt > after) return latest
         return withTimeoutOrNull(timeoutMs) {
@@ -495,7 +636,7 @@ class SmartSyncEngine @Inject constructor(
         _state.update {
             it.copy(
                 status = SyncEngineStatus.STOPPED,
-                message = "Stopped; checkpoint retained",
+                message = "تم إيقاف المزامنة مع الاحتفاظ بنقطة الاستكمال",
                 updatedAt = now,
             )
         }
@@ -521,6 +662,17 @@ class SmartSyncEngine @Inject constructor(
     private fun updateStatus(status: SyncEngineStatus, message: String) {
         _state.update {
             it.copy(status = status, message = message, updatedAt = System.currentTimeMillis())
+        }
+    }
+
+    private fun updateStage(stage: SyncStage, status: SyncEngineStatus, message: String) {
+        _state.update {
+            it.copy(
+                stage = stage,
+                status = status,
+                message = message,
+                updatedAt = System.currentTimeMillis(),
+            )
         }
     }
 

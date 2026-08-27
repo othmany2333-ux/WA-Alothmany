@@ -43,12 +43,28 @@ object WhatsAppUiBridge {
 
     fun serviceConnected(): Boolean = serviceRef.get() != null
 
+    /** Legacy fuzzy click kept for other modules. Smart Sync v0.3.1 does not use it. */
     fun clickFirstMatching(labels: Set<String>): Boolean =
         serviceRef.get()?.clickFirstMatching(labels).orFalse()
+
+    /**
+     * Conservative click for navigation tabs / Archived. It only accepts an exact
+     * label or a label-prefixed accessibility description, preventing a request
+     * for "Chats" from clicking "Search chats".
+     */
+    fun clickSafeMatching(labels: Set<String>): Boolean =
+        serviceRef.get()?.clickSafeMatching(labels).orFalse()
 
     fun scrollForward(): Boolean = serviceRef.get()?.scrollForward().orFalse()
 
     fun scrollBackward(): Boolean = serviceRef.get()?.scrollBackward().orFalse()
+
+    /** Scroll the primary large vertical list instead of an arbitrary carousel/filter. */
+    fun scrollPrimaryListForward(): Boolean =
+        serviceRef.get()?.scrollPrimaryListForward().orFalse()
+
+    fun scrollPrimaryListBackward(): Boolean =
+        serviceRef.get()?.scrollPrimaryListBackward().orFalse()
 
     fun performBack(): Boolean = serviceRef.get()?.performBack().orFalse()
 

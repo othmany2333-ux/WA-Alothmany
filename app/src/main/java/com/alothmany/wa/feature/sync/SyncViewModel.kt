@@ -15,7 +15,6 @@ import com.alothmany.wa.feature.sync.model.ContactSyncMode
 import com.alothmany.wa.feature.sync.model.GroupSelectionKind
 import com.alothmany.wa.feature.sync.model.SyncEngineStatus
 import com.alothmany.wa.feature.sync.model.SyncRuntimeState
-import com.alothmany.wa.feature.sync.selection.OperationSelectionStore
 import com.alothmany.wa.feature.sync.service.SmartSyncService
 import com.alothmany.wa.system.integration.SystemIntegrationManager
 import com.alothmany.wa.system.integration.SystemIntegrationState
@@ -118,7 +117,7 @@ class SyncViewModel @Inject constructor(
                 id = group.id,
                 name = group.displayName,
                 unread = meta?.isUnread == true,
-                active = meta?.isActive != false && !((meta?.isDeleted) == true),
+                active = meta?.isActive != false && meta?.isDeleted != true,
                 locked = meta?.isLocked == true,
                 deleted = meta?.isDeleted == true,
                 community = meta?.isCommunity == true || group.isCommunity,
@@ -188,16 +187,6 @@ class SyncViewModel @Inject constructor(
         contactMode.value = mode
     }
 
-    fun prepareLinkedOperation() {
-        val state = uiState.value
-        OperationSelectionStore.set(
-            sourceId = state.sourceId,
-            runId = state.runtime.runId,
-            groupIds = state.selectedIds,
-            contactMode = state.contactMode,
-        )
-    }
-
     fun startSync() {
         ContextCompat.startForegroundService(
             context,
@@ -225,7 +214,6 @@ class SyncViewModel @Inject constructor(
         return groups.map { it to meta[it.id] }
     }
 
-    // Cached cold flows used only by selection actions; they preserve Room as the source of truth.
     private val groupSnapshot = groupDao.observeAll()
     private val metaSnapshot = metaDao.observeAll()
 }
