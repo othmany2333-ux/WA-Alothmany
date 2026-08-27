@@ -80,14 +80,15 @@ fun SyncScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (state.sourceName != null) {
+            val sourceName = state.sourceName
+            if (sourceName != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(Icons.Rounded.Chat, null, tint = Teal400, modifier = Modifier.size(18.dp))
                     Text(
-                        stringResource(R.string.sync_current_source, state.sourceName),
+                        stringResource(R.string.sync_current_source, sourceName),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                     )
