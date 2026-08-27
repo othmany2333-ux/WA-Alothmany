@@ -1,0 +1,234 @@
+name: Apply Smart Sync v0.3.6 DIRECT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-v036-direct:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract v0.3.6 payload
+        run: unzip -o WA-Alothmany-Sync-v0.3.6-PATCH.zip
+
+      - name: Apply v0.3.6 directly
+        run: |
+          set -euo pipefail
+
+          PAYLOAD="WA-Alothmany-Sync-v0.3.6/payload"
+
+          cp "$PAYLOAD/app/src/main/java/com/alothmany/wa/system/accessibility/WAAccessibilityService.kt" \
+            app/src/main/java/com/alothmany/wa/system/accessibility/WAAccessibilityService.kt
+
+          cp "$PAYLOAD/app/src/main/res/xml/accessibility_service_config.xml" \
+            app/src/main/res/xml/accessibility_service_config.xml
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          engine = Path("app/src/main/java/com/alothmany/wa/feature/sync/engine/SmartSyncEngine.kt")
+          text = engine.read_text(encoding="utf-8")
+
+          old_gate = '''            if (!integrationState.accessibility.enabled &&
+              !integrationState.accessibility.serviceConnected &&
+              !WhatsAppUiBridge.serviceConnected()
+          ) {
+              fail("خدمة Accessibility غير مفعلة أو غير متصلة")
+              return
+          }
+          '''
+          new_gate = '''            if (!integrationState.accessibility.enabled) {
+              fail("خدمة Accessibility غير مفعلة")
+              return
+          }
+          if (!awaitAccessibilityBridge()) {
+              fail("خدمة Accessibility مفعلة ولكن محرك القراءة غير متصل. أعد تشغيل خدمة WA Al-othmany مرة واحدة")
+              return
+          }
+          '''
+
+          if "private suspend fun awaitAccessibilityBridge" not in text:
+              if old_gate not in text:
+                  raise SystemExit("Accessibility gate not found")
+              text = text.replace(old_gate, new_gate, 1)
+
+          old_initial = '''            delay(220)
+          val initialSnapshot = WhatsAppUiBridge.captureNow(source.packageName)
+              ?: awaitSnapshot(
+                  packageName = source.packageName,
+                  after = launchAt - 350,
+                  timeoutMs = 6_000,
+              )
+          '''
+          new_initial = '''            val initialSnapshot = awaitInitialWhatsAppSnapshot(
+              packageName = source.packageName,
+              launchAt = launchAt,
+          )
+          '''
+
+          if "awaitInitialWhatsAppSnapshot(" not in text:
+              if old_initial not in text:
+                  raise SystemExit("Initial snapshot block not found")
+              text = text.replace(old_initial, new_initial, 1)
+
+          text = text.replace(
+              "            WhatsAppUiBridge.captureNow(packageName)?.let { fresh -> current = fresh }\n",
+              ""
+          )
+          text = text.replace(
+              "            WhatsAppUiBridge.captureNow(packageName)?.let { fresh -> snapshot = fresh }\n",
+              ""
+          )
+
+          text = text.replace(
+              "WhatsAppUiBridge.scrollPrimaryListForward()",
+              "WhatsAppUiBridge.scrollForward()"
+          )
+          text = text.replace(
+              "WhatsAppUiBridge.scrollPrimaryListBackward()",
+              "WhatsAppUiBridge.scrollBackward()"
+          )
+
+          text = text.replace("Smart Sync v0.3.5", "Smart Sync v0.3.6")
+
+          helper_anchor = "    private suspend fun awaitChangedSnapshot(\n"
+          helpers = '''    private suspend fun awaitAccessibilityBridge(timeoutMs: Long = 2_800L): Boolean {
+              val deadline = System.currentTimeMillis() + timeoutMs
+              while (System.currentTimeMillis() < deadline) {
+                  if (WhatsAppUiBridge.serviceConnected()) return true
+                  delay(80)
+              }
+              return WhatsAppUiBridge.serviceConnected()
+          }
+
+          private suspend fun awaitInitialWhatsAppSnapshot(
+              packageName: String,
+              launchAt: Long,
+          ): WhatsAppUiSnapshot? {
+              awaitSnapshot(
+                  packageName = packageName,
+                  after = launchAt - 900,
+                  timeoutMs = 5_500,
+              )?.takeIf { it.nodes.isNotEmpty() }?.let { return it }
+
+              repeat(4) { attempt ->
+                  delay(180L + attempt * 140L)
+                  val captured = WhatsAppUiBridge.captureNow(packageName)
+                  if (captured != null &&
+                      captured.packageName == packageName &&
+                      captured.nodes.isNotEmpty()
+                  ) {
+                      return captured
+                  }
+
+                  val latest = WhatsAppUiBridge.latest.value
+                  if (latest != null &&
+                      latest.packageName == packageName &&
+                      latest.nodes.isNotEmpty()
+                  ) {
+                      return latest
+                  }
+              }
+              return null
+          }
+
+          '''
+
+          if "private suspend fun awaitAccessibilityBridge" not in text:
+              if helper_anchor not in text:
+                  raise SystemExit("Helper insertion point not found")
+              text = text.replace(helper_anchor, helpers + helper_anchor, 1)
+
+          engine.write_text(text, encoding="utf-8")
+
+          detector = Path("app/src/main/java/com/alothmany/wa/feature/sync/engine/WhatsAppScreenDetector.kt")
+          d = detector.read_text(encoding="utf-8")
+
+          d = d.replace(
+              '''"channels", "channel", "updates", "status", "statuses",
+              "القنوات", "القناه", "التحديثات", "الحاله"''',
+              '''"channels", "channel", "updates",
+              "القنوات", "القناه", "التحديثات"'''
+          )
+
+          marker = "v0.3.6 Samsung chat-home fallback"
+          if marker not in d:
+              anchor = "        val negativeTopSurface = containsNegativeSurface(topLabels)\n"
+              block = '''
+          // v0.3.6 Samsung chat-home fallback:
+          // known Channels/Communities/Calls surfaces were already rejected.
+          // Therefore a visible Chats tab/header is sufficient even if WhatsApp
+          // hides RecyclerView/clickable-row semantics from Accessibility.
+          if ((chatTabVisible || chatHeaderVisible) && !negativeTopSurface) {
+              return WhatsAppSurface.CHAT_LIST
+          }
+          '''
+              if anchor not in d:
+                  raise SystemExit("ScreenDetector insertion point not found")
+              d = d.replace(anchor, anchor + block, 1)
+
+          detector.write_text(d, encoding="utf-8")
+
+          build = Path("app/build.gradle.kts")
+          b = build.read_text(encoding="utf-8")
+          b = re.sub(r'versionCode = \d+', 'versionCode = 10', b, count=1)
+          b = re.sub(r'versionName = "0\.3\.[0-9]+"', 'versionName = "0.3.6"', b, count=1)
+          build.write_text(b, encoding="utf-8")
+
+          ci = Path(".github/workflows/android.yml")
+          w = ci.read_text(encoding="utf-8")
+          w = re.sub(
+              r'name: wa-al-othmany-debug-v0\.3\.[0-9]+',
+              'name: wa-al-othmany-debug-v0.3.6',
+              w,
+              count=1,
+          )
+          ci.write_text(w, encoding="utf-8")
+
+          print("Direct v0.3.6 patch applied")
+          PY
+
+          grep -q 'versionName = "0.3.6"' app/build.gradle.kts
+          grep -q 'awaitAccessibilityBridge' app/src/main/java/com/alothmany/wa/feature/sync/engine/SmartSyncEngine.kt
+          grep -q 'WhatsAppUiBridge.scrollForward()' app/src/main/java/com/alothmany/wa/feature/sync/engine/SmartSyncEngine.kt
+          grep -q 'v0.3.6 Samsung chat-home fallback' app/src/main/java/com/alothmany/wa/feature/sync/engine/WhatsAppScreenDetector.kt
+
+          if grep -q 'GROUP_FILTER_LABELS' app/src/main/java/com/alothmany/wa/feature/sync/engine/SmartSyncEngine.kt; then
+            echo "ERROR: Groups filter automation must not exist"
+            exit 1
+          fi
+
+          rm -rf WA-Alothmany-Sync-v0.3.6
+
+          git add \
+            app/src/main/java/com/alothmany/wa/system/accessibility/WAAccessibilityService.kt \
+            app/src/main/res/xml/accessibility_service_config.xml \
+            app/src/main/java/com/alothmany/wa/feature/sync/engine/SmartSyncEngine.kt \
+            app/src/main/java/com/alothmany/wa/feature/sync/engine/WhatsAppScreenDetector.kt \
+            app/build.gradle.kts \
+            .github/workflows/android.yml
+
+          git diff --cached --check
+
+          if git diff --cached --quiet; then
+            echo "v0.3.6 is already applied"
+            exit 0
+          fi
+
+          git commit -m "Apply Smart Sync v0.3.6 direct compatibility fix"
+          git push origin main
