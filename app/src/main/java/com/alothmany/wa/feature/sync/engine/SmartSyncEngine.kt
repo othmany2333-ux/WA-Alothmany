@@ -40,17 +40,14 @@ import javax.inject.Singleton
 import kotlin.math.roundToLong
 
 /**
- * Smart Sync v0.3.1
+ * Smart Sync v0.3.3 - independent group discovery.
  *
- * Independent sync path:
- * 1) Open the selected original WhatsApp app.
- * 2) Recover to the Chats tab using conservative exact/prefix navigation.
- * 3) Rewind the normal chat list to the top and scan it to the end.
- * 4) Detect group rows from chat-row evidence without clicking the Groups search filter.
- * 5) If Archived exists, return to top, open Archived and scan it to the end.
- * 6) Persist detected group names to Room; the Sync UI observes Room and shows them.
+ * Open WhatsApp -> recover to Chats -> read all visible rows -> classify groups
+ * from multiple signals -> generate stable identity fingerprints -> deduplicate ->
+ * persist -> scroll -> repeat until two verified end passes -> scan Archived ->
+ * show Room results in the Sync UI.
  *
- * No extract/publish/join/delete engine is invoked from this class.
+ * This engine never invokes extract/publish/join/delete/contact engines.
  */
 @Singleton
 class SmartSyncEngine @Inject constructor(
@@ -62,18 +59,20 @@ class SmartSyncEngine @Inject constructor(
     private val runDao: SyncRunDao,
     private val checkpointDao: SyncCheckpointDao,
     private val parser: WhatsAppGroupParser,
+    private val screenDetector: WhatsAppScreenDetector,
     private val logger: AppLogger,
 ) {
     companion object {
         private const val MAX_SCREENS_PER_RUN = 3500
         private const val END_CONFIRMATION_PASSES = 2
-        private const val MAX_CHAT_HOME_RECOVERY_ATTEMPTS = 7
+        private const val MAX_CHAT_HOME_RECOVERY_ATTEMPTS = 9
 
         private val CHAT_TAB_LABELS = setOf(
             "Chats", "Chat", "المحادثات", "الدردشات", "محادثات", "دردشات"
         )
         private val ARCHIVED_LABELS = setOf(
-            "Archived", "Archived chats", "مؤرشفة", "المؤرشفة", "المؤرشف", "الدردشات المؤرشفة"
+            "Archived", "Archived chats", "مؤرشفة", "المؤرشفة", "المؤرشف", "الدردشات المؤرشفة",
+            "مؤرشفه", "المؤرشفه", "الدردشات المؤرشفه"
         )
     }
 
@@ -164,11 +163,8 @@ class SmartSyncEngine @Inject constructor(
 
             val prefs = settings.preferences.first()
             val integrationState = integration.state.value
-            if (!integrationState.accessibility.enabled ||
-                !integrationState.accessibility.serviceConnected ||
-                !WhatsAppUiBridge.serviceConnected()
-            ) {
-                fail("خدمة Accessibility غير متصلة")
+            if (!integrationState.accessibility.enabled) {
+                fail("خدمة Accessibility غير مفعلة")
                 return
             }
 
@@ -202,27 +198,29 @@ class SmartSyncEngine @Inject constructor(
                 fail("تعذر الحصول على أمر فتح واتساب")
                 return
             }
+
+            val launchAt = System.currentTimeMillis()
             context.startActivity(launchIntent)
-            logger.info("SYNC", "Opened ${source.packageName} for independent chat-list sync")
+            logger.info("SYNC", "Opened ${source.packageName} for Smart Sync v0.3.3")
 
             val initialSnapshot = awaitSnapshot(
                 packageName = source.packageName,
-                after = System.currentTimeMillis() - 500,
-                timeoutMs = 5_000,
+                after = launchAt - 350,
+                timeoutMs = 6_000,
             )
             if (initialSnapshot == null) {
-                fail("واجهة واتساب غير ظاهرة لخدمة Accessibility")
+                fail("لم تصل شجرة واجهة واتساب إلى Accessibility")
                 return
             }
 
-            updateStatus(SyncEngineStatus.NAVIGATING, "جاري الانتقال إلى الدردشات")
+            updateStatus(SyncEngineStatus.NAVIGATING, "جاري التحقق من شاشة الدردشات")
             var snapshot = ensureChatsHome(source.packageName, initialSnapshot)
             if (snapshot == null) {
-                fail("تعذر الوصول إلى شاشة الدردشات بأمان")
+                fail("تعذر الوصول إلى قائمة الدردشات بدون مخاطرة")
                 return
             }
 
-            updateStatus(SyncEngineStatus.RECOVERING, "جاري الرجوع إلى بداية المحادثات")
+            updateStatus(SyncEngineStatus.RECOVERING, "جاري الرجوع إلى بداية قائمة الدردشات")
             snapshot = rewindToTop(source.packageName, snapshot)
 
             val existingMeta = metaDao.getForSource(source.id).associateBy { it.groupId }
@@ -231,7 +229,7 @@ class SmartSyncEngine @Inject constructor(
                 existingMeta = existingMeta,
             )
 
-            updateStage(SyncStage.NORMAL_GROUPS, SyncEngineStatus.SCANNING, "جاري قراءة المحادثات العادية")
+            updateStage(SyncStage.NORMAL_GROUPS, SyncEngineStatus.SCANNING, "جاري قراءة الدردشات واكتشاف القروبات")
             val normalResult = scanSection(
                 sourceId = source.id,
                 packageName = source.packageName,
@@ -256,15 +254,21 @@ class SmartSyncEngine @Inject constructor(
                     return
                 }
 
-                val archivedSnapshot = awaitSnapshot(source.packageName, beforeOpen, 2_800)
+                val archivedSnapshot = awaitSnapshot(source.packageName, beforeOpen, 3_000)
                     ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == source.packageName }
                 if (archivedSnapshot == null) {
                     fail("تم فتح المؤرشف ولكن تعذر قراءة واجهته")
                     return
                 }
 
+                val archivedSurface = screenDetector.classify(archivedSnapshot, parser.parse(archivedSnapshot))
+                if (archivedSurface !in setOf(WhatsAppSurface.ARCHIVED_LIST, WhatsAppSurface.CHAT_LIST)) {
+                    fail("واجهة المؤرشف غير قابلة للقراءة بأمان")
+                    return
+                }
+
                 val archivedTop = rewindToTop(source.packageName, archivedSnapshot)
-                updateStage(SyncStage.ARCHIVED, SyncEngineStatus.SCANNING, "جاري قراءة المحادثات المؤرشفة")
+                updateStage(SyncStage.ARCHIVED, SyncEngineStatus.SCANNING, "جاري قراءة القروبات المؤرشفة")
                 scanSection(
                     sourceId = source.id,
                     packageName = source.packageName,
@@ -288,7 +292,6 @@ class SmartSyncEngine @Inject constructor(
 
             updateStage(SyncStage.FINAL_VERIFY, SyncEngineStatus.VERIFYING_END, "تم تأكيد نهاية القوائم")
 
-            // Only a fully completed normal + archived scan is allowed to age missing groups.
             metaDao.markMissingAfterSuccessfulRun(source.id, runId)
             metaDao.promoteVerifiedMissingToDeleted(source.id)
 
@@ -309,7 +312,7 @@ class SmartSyncEngine @Inject constructor(
             checkpointDao.delete(runId)
             logger.success(
                 "SYNC",
-                "Independent Smart Sync completed: ${accumulator.seenIds.size} group(s), ${accumulator.newCount} new"
+                "Smart Sync v0.3.3 completed: ${accumulator.seenIds.size} group(s), ${accumulator.newCount} new"
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -328,34 +331,65 @@ class SmartSyncEngine @Inject constructor(
     }
 
     /**
-     * Recover from Search, an open chat, Updates/Channels, or another restored
-     * WhatsApp surface. We never search for or click the Groups filter here.
+     * We classify the current surface BEFORE pressing Back. This prevents the
+     * previous bug where an already-correct Chats screen was backed out of.
      */
     private suspend fun ensureChatsHome(
         packageName: String,
         initial: WhatsAppUiSnapshot,
     ): WhatsAppUiSnapshot? {
         var current = initial
-        repeat(MAX_CHAT_HOME_RECOVERY_ATTEMPTS) {
+        repeat(MAX_CHAT_HOME_RECOVERY_ATTEMPTS) { attempt ->
             if (stopRequested.get()) return null
             awaitResumeIfPaused()
 
-            val before = current.capturedAt
-            if (WhatsAppUiBridge.clickSafeMatching(CHAT_TAB_LABELS)) {
-                delay(120)
-                val changed = awaitSnapshot(packageName, before, 1_500)
-                val latest = WhatsAppUiBridge.latest.value
-                return changed
-                    ?: latest?.takeIf { it.packageName == packageName }
-                    ?: current
+            val parsed = parser.parse(current)
+            when (screenDetector.classify(current, parsed)) {
+                WhatsAppSurface.CHAT_LIST -> return current
+                WhatsAppSurface.ARCHIVED_LIST,
+                WhatsAppSurface.SEARCH,
+                WhatsAppSurface.OPEN_CHAT -> {
+                    val before = current.capturedAt
+                    if (!WhatsAppUiBridge.performBack()) return null
+                    current = awaitSnapshot(packageName, before, 1_700)
+                        ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == packageName }
+                        ?: current
+                }
+                WhatsAppSurface.CHANNELS_OR_UPDATES,
+                WhatsAppSurface.COMMUNITIES,
+                WhatsAppSurface.CALLS,
+                WhatsAppSurface.UNKNOWN -> {
+                    val before = current.capturedAt
+                    val clickedChats = WhatsAppUiBridge.clickSafeMatching(CHAT_TAB_LABELS)
+                    if (clickedChats) {
+                        delay(120)
+                        current = awaitSnapshot(packageName, before, 1_700)
+                            ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == packageName }
+                            ?: current
+                        val afterClick = screenDetector.classify(current, parser.parse(current))
+                        if (afterClick == WhatsAppSurface.CHAT_LIST) return current
+                    } else {
+                        // Unknown restored surfaces may be a detail page where the
+                        // bottom navigation is hidden. One Back per attempt only.
+                        if (attempt >= 2) {
+                            val beforeBack = current.capturedAt
+                            if (!WhatsAppUiBridge.performBack()) return null
+                            current = awaitSnapshot(packageName, beforeBack, 1_700)
+                                ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == packageName }
+                                ?: current
+                        } else {
+                            delay(180)
+                            current = WhatsAppUiBridge.latest.value
+                                ?.takeIf { it.packageName == packageName }
+                                ?: current
+                        }
+                    }
+                }
             }
-
-            if (!WhatsAppUiBridge.performBack()) return null
-            current = awaitSnapshot(packageName, before, 1_500)
-                ?: WhatsAppUiBridge.latest.value?.takeIf { it.packageName == packageName }
-                ?: current
         }
-        return null
+        return current.takeIf {
+            screenDetector.classify(it, parser.parse(it)) == WhatsAppSurface.CHAT_LIST
+        }
     }
 
     private suspend fun scanSection(
@@ -370,12 +404,23 @@ class SmartSyncEngine @Inject constructor(
         var endPasses = 0
         var eventTimeoutMs = 1_250L
         var sawArchivedEntry = false
+        var previousSeenCount = accumulator.seenIds.size
 
         while (!stopRequested.get() && accumulator.processedScreens < MAX_SCREENS_PER_RUN) {
             awaitResumeIfPaused()
             if (stopRequested.get()) break
 
             val parsed = parser.parse(snapshot)
+            val surface = screenDetector.classify(snapshot, parsed)
+            val allowedSurface = if (archived) {
+                surface in setOf(WhatsAppSurface.ARCHIVED_LIST, WhatsAppSurface.CHAT_LIST)
+            } else {
+                surface == WhatsAppSurface.CHAT_LIST
+            }
+            if (!allowedSurface) {
+                throw IllegalStateException("غادرت واجهة واتساب قائمة الدردشات أثناء المزامنة: $surface")
+            }
+
             accumulator.processedScreens++
             if (!archived && parsed.hasArchivedEntry) sawArchivedEntry = true
 
@@ -383,16 +428,14 @@ class SmartSyncEngine @Inject constructor(
             val groupEntities = ArrayList<GroupEntity>(parsed.groups.size)
             val metaEntities = ArrayList<GroupSyncMetaEntity>(parsed.groups.size)
             var discoveredThisScreen = 0
-            var newInDatabaseThisScreen = 0
             var lastName: String? = null
 
             parsed.groups.forEach { candidate ->
-                val groupId = stableGroupId(sourceId, candidate.normalizedName)
+                val groupId = stableGroupId(sourceId, candidate.identityFingerprint)
                 val firstTimeThisRun = accumulator.seenIds.add(groupId)
-                if (firstTimeThisRun) discoveredThisScreen++
-                if (firstTimeThisRun && groupId !in accumulator.existingIds) {
-                    accumulator.newCount++
-                    newInDatabaseThisScreen++
+                if (firstTimeThisRun) {
+                    discoveredThisScreen++
+                    if (groupId !in accumulator.existingIds) accumulator.newCount++
                 }
                 lastName = candidate.displayName
                 val oldMeta = accumulator.existingMeta[groupId]
@@ -405,7 +448,7 @@ class SmartSyncEngine @Inject constructor(
                     isCommunity = false,
                     memberCount = null,
                     status = "AVAILABLE",
-                    fingerprint = candidate.rowFingerprint,
+                    fingerprint = candidate.identityFingerprint,
                     lastSyncedAt = now,
                 )
                 metaEntities += GroupSyncMetaEntity(
@@ -442,9 +485,8 @@ class SmartSyncEngine @Inject constructor(
                     lastScreenFingerprint = currentFingerprint,
                     message = when {
                         discoveredThisScreen > 0 && archived -> "تم اكتشاف $discoveredThisScreen قروب مؤرشف"
-                        discoveredThisScreen > 0 -> "تم اكتشاف $discoveredThisScreen قروب في هذه الشاشة"
-                        newInDatabaseThisScreen > 0 -> "تم العثور على $newInDatabaseThisScreen قروب جديد"
-                        else -> "جاري قراءة بقية المحادثات"
+                        discoveredThisScreen > 0 -> "تم اكتشاف $discoveredThisScreen قروب جديد في هذه الشاشة"
+                        else -> "جاري قراءة بقية الدردشات"
                     },
                     updatedAt = now,
                 )
@@ -462,12 +504,13 @@ class SmartSyncEngine @Inject constructor(
                     currentFingerprint = currentFingerprint,
                     timeoutMs = eventTimeoutMs,
                 )
-            } else {
-                null
-            }
+            } else null
 
-            val changed = nextSnapshot != null
-            if (!scrollAccepted || !changed) {
+            val noNewGroups = accumulator.seenIds.size == previousSeenCount
+            previousSeenCount = accumulator.seenIds.size
+            val screenDidNotChange = nextSnapshot == null
+
+            if (!scrollAccepted || (screenDidNotChange && noNewGroups)) {
                 endPasses++
                 _state.update {
                     it.copy(
@@ -479,24 +522,21 @@ class SmartSyncEngine @Inject constructor(
                 }
                 saveCheckpoint()
                 if (endPasses >= END_CONFIRMATION_PASSES) break
-                delay(180)
+                delay(220)
             } else {
                 endPasses = 0
             }
 
             if (nextSnapshot != null) {
                 val latency = (System.currentTimeMillis() - scrollStartedAt).coerceAtLeast(120)
-                eventTimeoutMs = (latency * 2.10).roundToLong().coerceIn(600L, 2_200L)
+                eventTimeoutMs = (latency * 2.10).roundToLong().coerceIn(600L, 2_300L)
                 snapshot = nextSnapshot
             } else {
-                eventTimeoutMs = (eventTimeoutMs + 220).coerceAtMost(2_200L)
+                eventTimeoutMs = (eventTimeoutMs + 220).coerceAtMost(2_300L)
             }
         }
 
-        return SectionResult(
-            lastSnapshot = snapshot,
-            sawArchivedEntry = sawArchivedEntry,
-        )
+        return SectionResult(lastSnapshot = snapshot, sawArchivedEntry = sawArchivedEntry)
     }
 
     private suspend fun awaitResumeIfPaused() {
@@ -509,9 +549,7 @@ class SmartSyncEngine @Inject constructor(
             )
         }
         pauseRequested.first { paused -> !paused || stopRequested.get() }
-        if (!stopRequested.get()) {
-            updateStatus(SyncEngineStatus.RECOVERING, "جاري الاستكمال من نقطة الحفظ")
-        }
+        if (!stopRequested.get()) updateStatus(SyncEngineStatus.RECOVERING, "جاري الاستكمال من نقطة الحفظ")
     }
 
     private suspend fun rewindToTop(
@@ -534,15 +572,13 @@ class SmartSyncEngine @Inject constructor(
                     packageName = packageName,
                     after = before,
                     currentFingerprint = fingerprint,
-                    timeoutMs = 850L,
+                    timeoutMs = 900L,
                 )
-            } else {
-                null
-            }
+            } else null
 
             if (previous == null) {
                 noChangePasses++
-                delay(100)
+                delay(110)
             } else {
                 current = previous
                 noChangePasses = 0
@@ -604,9 +640,7 @@ class SmartSyncEngine @Inject constructor(
     }
 
     private fun persistRuntimeAsync() {
-        scope.launch {
-            runCatching { saveCheckpoint(); upsertRun() }
-        }
+        scope.launch { runCatching { saveCheckpoint(); upsertRun() } }
     }
 
     private suspend fun upsertRun(completedAt: Long? = null) {
@@ -660,19 +694,12 @@ class SmartSyncEngine @Inject constructor(
     }
 
     private fun updateStatus(status: SyncEngineStatus, message: String) {
-        _state.update {
-            it.copy(status = status, message = message, updatedAt = System.currentTimeMillis())
-        }
+        _state.update { it.copy(status = status, message = message, updatedAt = System.currentTimeMillis()) }
     }
 
     private fun updateStage(stage: SyncStage, status: SyncEngineStatus, message: String) {
         _state.update {
-            it.copy(
-                stage = stage,
-                status = status,
-                message = message,
-                updatedAt = System.currentTimeMillis(),
-            )
+            it.copy(stage = stage, status = status, message = message, updatedAt = System.currentTimeMillis())
         }
     }
 
@@ -680,9 +707,9 @@ class SmartSyncEngine @Inject constructor(
         _state.value = newState
     }
 
-    private fun stableGroupId(sourceId: String, normalizedName: String): String {
+    private fun stableGroupId(sourceId: String, identityFingerprint: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest("$sourceId|$normalizedName".toByteArray(Charsets.UTF_8))
+            .digest("$sourceId|$identityFingerprint".toByteArray(Charsets.UTF_8))
         return "grp_" + digest.take(12).joinToString("") { "%02x".format(it) }
     }
 }

@@ -66,19 +66,32 @@ data class SyncRuntimeState(
         )
 }
 
+/**
+ * A group candidate detected from one visible WhatsApp chat-list row.
+ *
+ * identityFingerprint is deliberately stable and excludes volatile last-message
+ * content. observationFingerprint includes subtitle/UI state and is only used to
+ * detect screen changes while scrolling.
+ */
 data class ParsedGroupCandidate(
     val displayName: String,
     val normalizedName: String,
+    val subtitle: String?,
     val isUnread: Boolean,
     val isLocked: Boolean,
     val confidence: String,
-    val rowFingerprint: String,
+    val evidenceScore: Int,
+    val evidenceTags: Set<String>,
+    val identityFingerprint: String,
+    val observationFingerprint: String,
 )
 
 data class ParsedGroupScreen(
     val groups: List<ParsedGroupCandidate>,
     val screenFingerprint: String,
-    val looksLikeGroupList: Boolean,
+    val looksLikeChatList: Boolean,
     val hasArchivedEntry: Boolean = false,
     val chatRowCount: Int = 0,
-)
+) {
+    val looksLikeGroupList: Boolean get() = looksLikeChatList
+}

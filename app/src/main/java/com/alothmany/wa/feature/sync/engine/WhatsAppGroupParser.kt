@@ -10,75 +10,76 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Parses the normal WhatsApp chat list and returns only rows that have credible
- * group evidence. It intentionally does not depend on WhatsApp's Groups search
- * filter; the sync engine walks the complete Chats list and the Archived list.
- *
- * The screen fingerprint is built from ALL chat rows, not only detected groups.
- * That prevents the end detector from stopping on a screen that happens to have
- * only personal chats.
+ * Reads every visible WhatsApp chat-list row, classifies it, and returns only
+ * credible groups. Detection is multi-signal; no single word is trusted alone.
  */
 @Singleton
 class WhatsAppGroupParser @Inject constructor() {
-    // UI labels are normalized before comparison. Arabic normalization changes
-    // taa marbuta (ة) to haa (ه), so keep normalized archived variants here too.
     private val archivedLabels = setOf(
         "archived", "archived chats",
-        "مؤرشفة", "مؤرشفه",
-        "المؤرشفة", "المؤرشفه",
-        "المؤرشف",
-        "الدردشات المؤرشفة", "الدردشات المؤرشفه"
+        "مؤرشفه", "المؤرشفه", "المؤرشف", "الدردشات المؤرشفه"
     )
 
     private val ignoredExact = setOf(
-        "chats", "chat", "المحادثات", "الدردشات",
+        "chats", "chat", "المحادثات", "الدردشات", "محادثات", "دردشات",
         "groups", "group", "المجموعات", "القروبات", "مجموعات", "قروبات",
-        "unread", "غير مقروءة", "غير المقروءة",
-        "favourites", "favorites", "المفضلة",
-        "archived", "archived chats", "مؤرشفة", "المؤرشفة", "المؤرشف", "الدردشات المؤرشفة",
+        "unread", "غير مقروءه", "غير المقروءه",
+        "favourites", "favorites", "المفضله",
+        "archived", "archived chats", "مؤرشفه", "المؤرشفه", "المؤرشف", "الدردشات المؤرشفه",
         "communities", "المجتمعات", "community", "مجتمع",
-        "search", "بحث", "new chat", "محادثة جديدة",
+        "search", "بحث", "new chat", "محادثه جديده",
         "updates", "التحديثات", "channels", "القنوات", "calls", "المكالمات",
     )
 
     private val ignoredContains = setOf(
         "ask meta ai", "meta ai", "search chats", "search",
-        "اسال meta ai", "اسأل meta ai", "ابحث", "البحث"
+        "اسال meta ai", "ابحث", "البحث"
     )
 
-    private val groupEvidenceTokens = setOf(
-        "group", "groups", "group chat", "group icon", "group photo",
-        "مجموعة", "مجموعه", "قروب", "قروبات", "مجموعات",
+    private val strongGroupTokens = setOf(
+        "group chat", "group icon", "group photo", "group info", "group subject",
         "participants", "participant", "members", "member",
-        "مشاركين", "مشاركون", "أعضاء", "اعضاء",
+        "مشاركين", "مشاركون", "اعضاء", "عضو", "صوره القروب", "معلومات القروب"
     )
 
-    private val mentionTokens = setOf(
-        "mention", "mentioned", "mentions", "إشارة", "اشارة", "ذِكر", "ذكر"
+    private val softGroupTokens = setOf(
+        "group", "groups", "مجموعة", "مجموعه", "قروب", "قروبات", "مجموعات"
+    )
+
+    private val othersTokens = setOf(
+        "others", "other participants", "and others", "اخرون", "وآخرون", "واخرون", "البقيه"
+    )
+
+    private val selfTokens = setOf("you", "you:", "انت", "انت:", "أنت", "أنت:")
+    private val negativeSurfaceTokens = setOf(
+        "channel", "channels", "newsletter", "follow channel", "القناه", "القنوات", "متابعه القناه"
     )
 
     private val timeRegex = Regex("^\\d{1,2}[:.]\\d{2}(?:\\s*[ap]m)?$", RegexOption.IGNORE_CASE)
     private val countRegex = Regex("^[+]?\\d{1,4}$")
-    private val dateRegex = Regex("^(today|yesterday|اليوم|أمس|امس|\\d{1,2}[/.-]\\d{1,2}(?:[/.-]\\d{2,4})?)$", RegexOption.IGNORE_CASE)
-    private val senderPrefixRegex = Regex("^(?:~\\s*)?[^:]{1,48}:\\s+.+$", setOf(RegexOption.IGNORE_CASE))
+    private val dateRegex = Regex("^(today|yesterday|اليوم|امس|\\d{1,2}[/.-]\\d{1,2}(?:[/.-]\\d{2,4})?)$", RegexOption.IGNORE_CASE)
+    private val phoneRegex = Regex("(?<!\\d)\\+?\\d[\\d\\s().-]{5,}\\d(?!\\d)")
+    private val namedSenderPrefixRegex = Regex("^(?:~\\s*)?([^:]{1,48}):\\s+.+$")
 
     fun parse(snapshot: WhatsAppUiSnapshot): ParsedGroupScreen {
         if (snapshot.width <= 0 || snapshot.height <= 0) {
             return ParsedGroupScreen(emptyList(), fingerprint(emptyList()), false)
         }
 
-        val allRawLabels = snapshot.nodes
-            .asSequence()
+        val allNormalizedLabels = snapshot.nodes.asSequence()
             .flatMap { sequenceOf(it.text, it.contentDescription) }
             .mapNotNull(::cleanLabel)
+            .map(::normalize)
             .toList()
-        val allLabels = allRawLabels.map(::normalize).toSet()
-        val hasArchivedEntry = allLabels.any { label -> archivedLabels.any { archived -> label == archived || label.startsWith("$archived ") } }
 
-        val minRowHeight = (snapshot.height * 0.045f).toInt().coerceAtLeast(44)
-        val maxRowHeight = (snapshot.height * 0.20f).toInt().coerceAtLeast(minRowHeight + 1)
-        val minRowWidth = (snapshot.width * 0.68f).toInt()
-        val contentTop = (snapshot.height * 0.07f).toInt()
+        val hasArchivedEntry = allNormalizedLabels.any { label ->
+            archivedLabels.any { archived -> label == archived || label.startsWith("$archived ") }
+        }
+
+        val minRowHeight = (snapshot.height * 0.043f).toInt().coerceAtLeast(42)
+        val maxRowHeight = (snapshot.height * 0.22f).toInt().coerceAtLeast(minRowHeight + 1)
+        val minRowWidth = (snapshot.width * 0.62f).toInt()
+        val contentTop = (snapshot.height * 0.055f).toInt()
 
         val rowNodes = snapshot.nodes.asSequence()
             .filter { it.enabled && it.clickable }
@@ -91,19 +92,19 @@ class WhatsAppGroupParser @Inject constructor() {
 
         val parsedRows = rowNodes.mapNotNull { row -> parseRow(snapshot, row) }
         val groups = parsedRows.mapNotNull { it.group }
-            .distinctBy { it.normalizedName }
+            .distinctBy { it.identityFingerprint }
 
         return ParsedGroupScreen(
             groups = groups,
-            screenFingerprint = fingerprint(parsedRows.map { it.rowFingerprint }),
-            looksLikeGroupList = parsedRows.size >= 2,
+            screenFingerprint = fingerprint(parsedRows.map { it.observationFingerprint }),
+            looksLikeChatList = parsedRows.size >= 2,
             hasArchivedEntry = hasArchivedEntry,
             chatRowCount = parsedRows.size,
         )
     }
 
     private data class ParsedRow(
-        val rowFingerprint: String,
+        val observationFingerprint: String,
         val group: ParsedGroupCandidate?,
     )
 
@@ -112,94 +113,224 @@ class WhatsAppGroupParser @Inject constructor() {
             .filter { node -> row.bounds.contains(node.bounds) }
             .filter { node -> node.bounds.width > 0 && node.bounds.height > 0 }
             .toList()
+        if (inside.isEmpty()) return null
 
-        val textNodes = inside.mapNotNull { node ->
+        val usableText = inside.mapNotNull { node ->
             val raw = cleanLabel(node.text) ?: cleanLabel(node.contentDescription) ?: return@mapNotNull null
             val normalized = normalize(raw)
-            if (!isPossibleTitle(normalized)) return@mapNotNull null
+            if (!isPossibleRowText(normalized)) return@mapNotNull null
             node to raw
-        }
+        }.distinctBy { normalize(it.second) }
 
-        if (textNodes.isEmpty()) return null
+        if (usableText.isEmpty()) return null
 
-        val sortedText = textNodes
+        val titlePair = usableText
+            .filter { (node, _) -> node.bounds.top <= row.bounds.top + (row.bounds.height * 0.62f) }
             .sortedWith(
-                compareByDescending<Pair<WhatsAppUiNode, String>> { !it.first.text.isNullOrBlank() }
+                compareByDescending<Pair<WhatsAppUiNode, String>> { it.first.text != null }
                     .thenBy { it.first.bounds.top }
                     .thenByDescending { it.first.depth }
-                    .thenByDescending { it.first.bounds.left }
             )
+            .firstOrNull()
+            ?: usableText.minByOrNull { it.first.bounds.top }
+            ?: return null
 
-        // Prefer a real child TextView over a combined contentDescription placed on
-        // the whole clickable row. The latter often contains title + preview + time.
-        val titlePair = sortedText.firstOrNull() ?: return null
         val displayName = titlePair.second.trim()
         val normalizedName = normalize(displayName)
-        if (normalizedName.length < 2) return null
+        if (!isPossibleTitle(normalizedName)) return null
 
-        val remainingTexts = sortedText.drop(1).map { it.second.trim() }.filter { it.isNotBlank() }
+        val subtitleCandidates = usableText
+            .filter { it !== titlePair }
+            .filter { (node, raw) ->
+                node.bounds.top >= titlePair.first.bounds.top &&
+                    normalize(raw) != normalizedName
+            }
+            .sortedBy { it.first.bounds.top }
+            .map { it.second.trim() }
+            .filter { it.isNotBlank() }
+
+        val subtitle = subtitleCandidates.firstOrNull { value ->
+            val normalized = normalize(value)
+            !timeRegex.matches(normalized) && !dateRegex.matches(normalized) && !countRegex.matches(normalized)
+        }
+
         val descriptorRaw = inside.joinToString(" ") { node ->
-            listOfNotNull(node.text, node.contentDescription, node.viewId).joinToString(" ")
+            listOfNotNull(node.text, node.contentDescription, node.viewId, node.className).joinToString(" ")
         }
         val descriptor = normalize(descriptorRaw)
+        val normalizedSubtitle = subtitle?.let(::normalize).orEmpty()
 
-        val unread = "unread" in descriptor || "غير مقرو" in descriptor || "messages unread" in descriptor
-        val locked = "locked chat" in descriptor || "chat lock" in descriptor || "مقفل" in descriptor || "مقفلة" in descriptor
+        val unread = "unread" in descriptor || "غير مقرو" in descriptor
+        val locked = "locked chat" in descriptor || "chat lock" in descriptor || "مقفل" in descriptor || "مقفله" in descriptor
 
-        val strongTokenEvidence = groupEvidenceTokens.any { token -> token in descriptor }
-        val mentionEvidence = mentionTokens.any { token -> token in descriptor } || inside.any { node -> cleanLabel(node.text) == "@" || cleanLabel(node.contentDescription) == "@" }
-        val senderPrefixEvidence = remainingTexts.any(::looksLikeGroupPreview)
-        val titleEvidence = groupEvidenceTokens.any { token -> token in normalizedName }
-        val groupEvidence = strongTokenEvidence || mentionEvidence || senderPrefixEvidence || titleEvidence
+        val evidence = linkedSetOf<String>()
+        var score = 0
 
-        val genericRowFingerprint = fingerprint(
-            buildList {
-                add(normalizedName)
-                remainingTexts.take(3).forEach { add(normalize(it)) }
-                add(unread.toString())
-                add(locked.toString())
-            }
-        )
-
-        if (!groupEvidence) {
-            return ParsedRow(rowFingerprint = genericRowFingerprint, group = null)
+        val explicitGroupUi = strongGroupTokens.any { it in descriptor } ||
+            inside.any { node -> normalize(node.viewId.orEmpty()).contains("group") }
+        if (explicitGroupUi) {
+            score += 6
+            evidence += "GROUP_UI"
         }
 
-        val confidence = when {
-            strongTokenEvidence || mentionEvidence -> "HIGH"
-            senderPrefixEvidence && remainingTexts.size >= 1 -> "HIGH"
-            titleEvidence -> "MEDIUM"
-            else -> "LOW"
+        if (softGroupTokens.any { it in normalizedName }) {
+            score += 2
+            evidence += "GROUP_NAME_TOKEN"
         }
 
-        return ParsedRow(
-            rowFingerprint = genericRowFingerprint,
-            group = ParsedGroupCandidate(
-                displayName = displayName,
-                normalizedName = normalizedName,
-                isUnread = unread,
-                isLocked = locked,
-                confidence = confidence,
-                rowFingerprint = genericRowFingerprint,
+        val senderPrefix = senderPrefix(normalizedSubtitle)
+        if (senderPrefix != null && senderPrefix !in selfTokens) {
+            score += 4
+            evidence += "SENDER_PREFIX"
+        }
+
+        val phones = phoneRegex.findAll(subtitle.orEmpty()).map { normalize(it.value) }.distinct().toList()
+        if (phones.size >= 2) {
+            score += 5
+            evidence += "MULTIPLE_NUMBERS"
+        } else if (phones.size == 1 && hasListSeparator(normalizedSubtitle)) {
+            score += 2
+            evidence += "NUMBER_LIST"
+        }
+
+        val participantLikeList = participantListScore(normalizedSubtitle)
+        if (participantLikeList >= 2) {
+            score += 3
+            evidence += "PARTICIPANT_LIST"
+        }
+
+        if (othersTokens.any { it in normalizedSubtitle || it in descriptor }) {
+            score += 4
+            evidence += "OTHERS"
+        }
+
+        if ("@" in descriptor || "mention" in descriptor || "اشاره" in descriptor) {
+            score += 2
+            evidence += "MENTION"
+        }
+
+        // "You:" by itself is common in individual chats, so it is only a weak
+        // supporting signal when another group clue already exists.
+        if (selfTokens.any { token -> normalizedSubtitle.startsWith(token) }) {
+            if (score > 0) score += 1
+            evidence += "SELF_PREFIX"
+        }
+
+        if (negativeSurfaceTokens.any { it in descriptor }) {
+            score -= 8
+            evidence += "CHANNEL_NEGATIVE"
+        }
+
+        if (looksLikePhoneOnly(normalizedName) && score < 6) {
+            score -= 3
+            evidence += "PHONE_TITLE_NEGATIVE"
+        }
+
+        val structuralSignature = stableStructureSignature(inside, evidence)
+        // Only include subtitle data in identity when it looks like a participant
+        // roster (numbers/names/others), never when it is merely the volatile last message.
+        val stableSubtitleHint = when {
+            phones.size >= 2 -> phones.sorted().joinToString(",")
+            participantLikeList >= 2 && senderPrefix == null -> normalizedSubtitle
+            othersTokens.any { it in normalizedSubtitle } && senderPrefix == null -> normalizedSubtitle
+            else -> ""
+        }
+        val identityFingerprint = fingerprint(
+            listOf(
+                normalizedName,
+                stableSubtitleHint,
+                structuralSignature,
+                evidence.filterNot { it.endsWith("NEGATIVE") }.sorted().joinToString(","),
             )
         )
+
+        val observationFingerprint = fingerprint(
+            listOf(
+                normalizedName,
+                normalizedSubtitle,
+                structuralSignature,
+                unread.toString(),
+                locked.toString(),
+            )
+        )
+
+        val group = if (isCredibleGroup(score, evidence)) {
+            ParsedGroupCandidate(
+                displayName = displayName,
+                normalizedName = normalizedName,
+                subtitle = subtitle,
+                isUnread = unread,
+                isLocked = locked,
+                confidence = when {
+                    score >= 8 -> "HIGH"
+                    score >= 5 -> "MEDIUM"
+                    else -> "LOW"
+                },
+                evidenceScore = score,
+                evidenceTags = evidence,
+                identityFingerprint = identityFingerprint,
+                observationFingerprint = observationFingerprint,
+            )
+        } else {
+            null
+        }
+
+        return ParsedRow(observationFingerprint = observationFingerprint, group = group)
     }
 
-    private fun looksLikeGroupPreview(raw: String): Boolean {
-        val value = raw.trim()
-        val normalized = normalize(value)
-        if (senderPrefixRegex.matches(value)) return true
-        if (normalized.startsWith("~ ") && normalized.length > 3) return true
-        if (normalized.startsWith("you:") || normalized.startsWith("انت:") || normalized.startsWith("أنت:")) return true
-        return false
+    private fun isCredibleGroup(score: Int, evidence: Set<String>): Boolean {
+        if ("CHANNEL_NEGATIVE" in evidence) return false
+        if (score < 4) return false
+        return evidence.any {
+            it in setOf("GROUP_UI", "SENDER_PREFIX", "MULTIPLE_NUMBERS", "PARTICIPANT_LIST", "OTHERS")
+        }
+    }
+
+    private fun senderPrefix(value: String): String? {
+        val match = namedSenderPrefixRegex.find(value) ?: return null
+        return normalize(match.groupValues[1]).trim().ifBlank { null }
+    }
+
+    private fun participantListScore(value: String): Int {
+        if (value.isBlank()) return 0
+        val parts = value.split(',', '،', '·', '•')
+            .map { it.trim() }
+            .filter { it.length in 2..40 }
+            .filterNot { timeRegex.matches(it) || dateRegex.matches(it) }
+        return parts.distinct().size
+    }
+
+    private fun hasListSeparator(value: String): Boolean =
+        value.any { it == ',' || it == '،' || it == '·' || it == '•' }
+
+    private fun stableStructureSignature(nodes: List<WhatsAppUiNode>, evidence: Set<String>): String {
+        val classes = nodes.mapNotNull { it.className?.substringAfterLast('.') }
+            .distinct().sorted().take(8).joinToString(",")
+        val stableIds = nodes.mapNotNull { node ->
+            node.viewId?.substringAfterLast('/')?.let(::normalize)
+        }.filterNot { id ->
+            id.contains("time") || id.contains("date") || id.contains("unread") || id.contains("badge")
+        }.distinct().sorted().take(8).joinToString(",")
+        val stableEvidence = evidence.filterNot {
+            it in setOf("SELF_PREFIX", "MENTION", "NUMBER_LIST", "CHANNEL_NEGATIVE", "PHONE_TITLE_NEGATIVE")
+        }.sorted().joinToString(",")
+        return fingerprint(listOf(classes, stableIds, stableEvidence))
+    }
+
+    private fun looksLikePhoneOnly(value: String): Boolean =
+        value.isNotBlank() && value.all { it.isDigit() || it.isWhitespace() || it in "+-()/" }
+
+    private fun isPossibleRowText(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (value.length > 180) return false
+        return true
     }
 
     private fun isPossibleTitle(value: String): Boolean {
         if (value.isBlank() || value in ignoredExact) return false
         if (ignoredContains.any { token -> token in value }) return false
-        if (value.length > 160) return false
+        if (value.length > 140) return false
         if (timeRegex.matches(value) || dateRegex.matches(value) || countRegex.matches(value)) return false
-        if (value.all { it.isDigit() || it.isWhitespace() || it in "+-()/" }) return false
         return true
     }
 
@@ -217,6 +348,7 @@ class WhatsAppGroupParser @Inject constructor() {
         .replace('آ', 'ا')
         .replace('ى', 'ي')
         .replace('ة', 'ه')
+        .replace(Regex("[ًٌٍَُِّْـ]"), "")
         .replace(Regex("\\s+"), " ")
 
     private fun fingerprint(parts: List<String>): String {

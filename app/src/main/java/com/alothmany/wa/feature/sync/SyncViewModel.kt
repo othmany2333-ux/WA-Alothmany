@@ -47,6 +47,7 @@ data class SyncGroupUiItem(
     val deleted: Boolean,
     val community: Boolean,
     val confidence: String,
+    val fingerprint: String,
     val selected: Boolean,
 )
 
@@ -122,6 +123,7 @@ class SyncViewModel @Inject constructor(
                 deleted = meta?.isDeleted == true,
                 community = meta?.isCommunity == true || group.isCommunity,
                 confidence = meta?.confidence ?: "UNKNOWN",
+                fingerprint = group.fingerprint,
                 selected = group.id in selection,
             )
         }
@@ -136,8 +138,8 @@ class SyncViewModel @Inject constructor(
             runtime = baseState.runtime,
             sourceId = sourceId,
             sourceName = source?.displayName,
-            accessibilityReady = baseState.system.accessibility.enabled && baseState.system.accessibility.serviceConnected,
-            canStart = source?.launchable == true && baseState.system.accessibility.enabled && baseState.system.accessibility.serviceConnected,
+            accessibilityReady = baseState.system.accessibility.enabled,
+            canStart = source?.launchable == true && baseState.system.accessibility.enabled,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUiState())
 

@@ -132,15 +132,23 @@ class WAAccessibilityService : AccessibilityService() {
 
     private fun safeLabelMatch(candidate: String, label: String): Boolean {
         if (candidate == label) return true
-        if (!candidate.startsWith(label)) return false
-        if (candidate.length == label.length) return true
-        val suffix = candidate.substring(label.length).trimStart()
-        if (suffix.isEmpty()) return true
-        return suffix.first() in setOf(',', '،', '-', '·', '•', ':') ||
-            suffix.startsWith("tab") ||
-            suffix.startsWith("علامة تبويب") ||
-            suffix.startsWith("غير مقرو") ||
-            suffix.startsWith("unread")
+
+        if (candidate.startsWith(label)) {
+            val suffix = candidate.substring(label.length).trimStart()
+            if (suffix.isEmpty()) return true
+            if (suffix.first() in setOf(',', '،', '-', '·', '•', ':') ||
+                suffix.startsWith("tab") ||
+                suffix.startsWith("علامة تبويب") ||
+                suffix.startsWith("علامه تبويب") ||
+                suffix.startsWith("غير مقرو") ||
+                suffix.startsWith("unread")) return true
+        }
+
+        val tabDescription = candidate.contains("tab") ||
+            candidate.contains("علامة تبويب") ||
+            candidate.contains("علامه تبويب")
+        if (tabDescription && (candidate.endsWith(label) || candidate.contains(" $label"))) return true
+        return false
     }
 
     private fun scrollPrimary(root: AccessibilityNodeInfo?, action: Int): Boolean {

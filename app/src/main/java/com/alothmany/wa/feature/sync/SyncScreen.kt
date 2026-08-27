@@ -65,7 +65,7 @@ fun SyncScreen(
                     border = BorderStroke(1.dp, if (running) Green400.copy(.5f) else Cyan400.copy(.4f)),
                 ) {
                     Text(
-                        if (running) stringResource(R.string.sync_live) else "v0.3",
+                        if (running) stringResource(R.string.sync_live) else "v0.3.3",
                         color = if (running) Green400 else Cyan400,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -305,6 +305,14 @@ private fun SyncGroupRow(group: SyncGroupUiItem, onClick: () -> Unit) {
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(group.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (group.fingerprint.isNotBlank()) {
+                Text(
+                    "FP ${group.fingerprint.take(12)}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (group.unread) TinyStatus(stringResource(R.string.unread), Blue400)
                 if (group.locked) TinyStatus(stringResource(R.string.locked), Gold400)
