@@ -1,0 +1,98 @@
+name: Apply v0.4.1 Test Fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/apply-v041-test-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Inject parser boundary fix into installer
+        run: |
+          set -euo pipefail
+
+          TARGET=".github/workflows/install-smart-sync-v041-final.yml"
+
+          if [ ! -f "$TARGET" ]; then
+            echo "ERROR: $TARGET was not found."
+            exit 1
+          fi
+
+          if grep -Fq "Fix v0.4.1 parser first-row boundary" "$TARGET"; then
+            echo "Fix is already installed."
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/install-smart-sync-v041-final.yml")
+          text = path.read_text(encoding="utf-8")
+
+          marker = """      - name: Make Gradle executable
+        run: chmod +x gradlew
+"""
+
+          patch = """      - name: Fix v0.4.1 parser first-row boundary
+        run: |
+          set -euo pipefail
+          python3 -c 'from pathlib import Path; p=Path("app/src/main/java/com/alothmany/wa/feature/sync/engine/WhatsAppGroupParser.kt"); t=p.read_text(encoding="utf-8"); old="(snapshot.height * .10f).toInt(),"; new="(snapshot.height * .07f).toInt(),"; count=t.count(old); assert count == 1, f"Expected exactly one boundary match, found {count}"; p.write_text(t.replace(old, new, 1), encoding="utf-8")'
+          git diff --check
+
+"""
+
+          if marker not in text:
+              raise SystemExit("ERROR: Could not find the 'Make Gradle executable' insertion point.")
+
+          path.write_text(
+              text.replace(marker, patch + marker, 1),
+              encoding="utf-8",
+          )
+
+          print("v0.4.1 parser boundary fix injected successfully.")
+          PY
+
+          git diff --check
+
+      - name: Commit updated installer
+        run: |
+          set -euo pipefail
+
+          TARGET=".github/workflows/install-smart-sync-v041-final.yml"
+
+          if git diff --quiet -- "$TARGET"; then
+            echo "No workflow change to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$TARGET"
+          git commit -m "Fix v0.4.1 parser test boundary"
+          git push origin HEAD:main
+
+      - name: Start fixed v0.4.1 installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sleep 3
+          gh workflow run install-smart-sync-v041-final.yml --ref main
+          echo "Fixed v0.4.1 installer dispatched."
