@@ -1,0 +1,108 @@
+name: Fix v0.4.1 OperationSelectionStore
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Replace OperationSelectionStore.kt
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET="app/src/main/java/com/alothmany/wa/feature/sync/selection/OperationSelectionStore.kt"
+          mkdir -p "$(dirname "$TARGET")"
+
+          cat > "$TARGET" <<'KOTLIN'
+          package com.alothmany.wa.feature.sync.selection
+
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.StateFlow
+          import kotlinx.coroutines.flow.asStateFlow
+
+          /**
+           * Lightweight selection hand-off for Smart Sync v0.4.1.
+           *
+           * v0.4.1 synchronizes WhatsApp groups only, so this store keeps only
+           * the selected source/run/group identifiers required by later operations.
+           */
+          object OperationSelectionStore {
+
+              private val _payload = MutableStateFlow(OperationSelectionPayload())
+
+              val payload: StateFlow<OperationSelectionPayload> =
+                  _payload.asStateFlow()
+
+              fun set(
+                  sourceId: String?,
+                  runId: String?,
+                  groupIds: Set<String>,
+              ) {
+                  _payload.value = OperationSelectionPayload(
+                      sourceId = sourceId,
+                      runId = runId,
+                      groupIds = groupIds.toSet(),
+                      updatedAt = System.currentTimeMillis(),
+                  )
+              }
+
+              fun clear() {
+                  _payload.value = OperationSelectionPayload()
+              }
+          }
+
+          data class OperationSelectionPayload(
+              val sourceId: String? = null,
+              val runId: String? = null,
+              val groupIds: Set<String> = emptySet(),
+              val updatedAt: Long = 0L,
+          )
+          KOTLIN
+
+      - name: Validate fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET="app/src/main/java/com/alothmany/wa/feature/sync/selection/OperationSelectionStore.kt"
+
+          test -f "$TARGET"
+          ! grep -n "ContactSyncMode" "$TARGET"
+          grep -q "object OperationSelectionStore" "$TARGET"
+          grep -q "data class OperationSelectionPayload" "$TARGET"
+
+          git diff --check
+          echo "OperationSelectionStore fix validated successfully."
+
+      - name: Commit and push fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET="app/src/main/java/com/alothmany/wa/feature/sync/selection/OperationSelectionStore.kt"
+
+          if git diff --quiet -- "$TARGET"; then
+            echo "No changes needed. The fix is already installed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$TARGET"
+          git commit -m "Fix v0.4.1 OperationSelectionStore build error"
+          git push origin HEAD:main
+
+          echo "Fix committed and pushed to main."
